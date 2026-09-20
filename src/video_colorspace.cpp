@@ -6,6 +6,7 @@
 #include "video_colorspace.h"
 
 // local includes
+#include "config.h"
 #include "logging.h"
 #include "video.h"
 
@@ -14,6 +15,7 @@ extern "C" {
 }
 
 namespace video {
+  using namespace std::literals;
 
   bool colorspace_is_hdr(const sunshine_colorspace_t &colorspace) {
     return colorspace.colorspace == colorspace_e::bt2020;
@@ -29,6 +31,14 @@ namespace video {
     if (config.dynamicRange > 0 && hdr_display) {
       // Rec. 2020 with ST 2084 perceptual quantizer
       colorspace.colorspace = colorspace_e::bt2020;
+    } else if (config::video.sdr_display_p3 || config::video.sdr_colorspace == "p3"sv || config::video.sdr_colorspace == "display_p3"sv) {
+      colorspace.colorspace = colorspace_e::display_p3;
+    } else if (config::video.sdr_colorspace == "rec709"sv) {
+      colorspace.colorspace = colorspace_e::rec709;
+    } else if (config::video.sdr_colorspace == "rec2020"sv) {
+      colorspace.colorspace = colorspace_e::bt2020sdr;
+    } else if (config::video.sdr_colorspace == "rec601"sv) {
+      colorspace.colorspace = colorspace_e::rec601;
     } else {
       switch (config.encoderCscMode >> 1) {
         case 0:
@@ -54,6 +64,10 @@ namespace video {
     }
 
     colorspace.full_range = (config.encoderCscMode & 0x1);
+    if (colorspace_is_hdr(colorspace) && config::video.hdr_limited_range) {
+      BOOST_LOG(info) << "Forcing limited color range for HDR stream";
+      colorspace.full_range = false;
+    }
 
     switch (config.dynamicRange) {
       case 0:
@@ -93,6 +107,14 @@ namespace video {
       case colorspace_e::rec709:
         // Rec. 709
         avcodec_colorspace.primaries = AVCOL_PRI_BT709;
+        avcodec_colorspace.transfer_function = AVCOL_TRC_BT709;
+        avcodec_colorspace.matrix = AVCOL_SPC_BT709;
+        avcodec_colorspace.software_format = SWS_CS_ITU709;
+        break;
+
+      case colorspace_e::display_p3:
+        // Display P3 (SMPTE 432 / D65)
+        avcodec_colorspace.primaries = AVCOL_PRI_SMPTE432;
         avcodec_colorspace.transfer_function = AVCOL_TRC_BT709;
         avcodec_colorspace.matrix = AVCOL_SPC_BT709;
         avcodec_colorspace.software_format = SWS_CS_ITU709;
@@ -165,6 +187,7 @@ namespace video {
         result = &colors[0];
         break;
       case colorspace_e::rec709:
+      case colorspace_e::display_p3:
         result = &colors[2];
         break;
       case colorspace_e::bt2020:
@@ -189,6 +212,7 @@ namespace video {
           Kb = 0.114;
           break;
         case colorspace_e::rec709:
+        case colorspace_e::display_p3:
         default:
           Kr = 0.2126;
           Kb = 0.0722;
@@ -269,6 +293,7 @@ namespace video {
         result = &colors[0];
         break;
       case colorspace_e::rec709:
+      case colorspace_e::display_p3:
       default:
         result = &colors[4];
         break;

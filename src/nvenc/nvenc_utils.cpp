@@ -68,6 +68,13 @@ namespace nvenc {
         colorspace.matrix = NV_ENC_VUI_MATRIX_COEFFS_BT709;
         break;
 
+      case video::colorspace_e::display_p3:
+        // Display P3 (SMPTE 432 / D65)
+        colorspace.primaries = (NV_ENC_VUI_COLOR_PRIMARIES) 12;
+        colorspace.tranfer_function = NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT709;
+        colorspace.matrix = NV_ENC_VUI_MATRIX_COEFFS_BT709;
+        break;
+
       case video::colorspace_e::bt2020sdr:
         // Rec. 2020
         colorspace.primaries = NV_ENC_VUI_COLOR_PRIMARIES_BT2020;

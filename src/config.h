@@ -149,6 +149,9 @@ namespace config {
     std::string fallback_mode;
     bool isolated_virtual_display_option;
     bool ignore_encoder_probe_failure;
+    bool sdr_display_p3;
+    bool hdr_limited_range;
+    std::string sdr_colorspace;
   };
 
   struct audio_t {

@@ -13,6 +13,7 @@ namespace video {
   enum class colorspace_e {
     rec601,  ///< Rec. 601
     rec709,  ///< Rec. 709
+    display_p3,  ///< Display P3 (SMPTE 432 / D65)
     bt2020sdr,  ///< Rec. 2020 SDR
     bt2020,  ///< Rec. 2020 HDR
   };

@@ -170,6 +170,22 @@ const validateFallbackMode = (event) => {
               v-if="platform === 'windows'"
     ></Checkbox>
 
+    <!-- SDR Display P3 -->
+    <Checkbox class="mb-3"
+              id="sdr_display_p3"
+              locale-prefix="config"
+              v-model="config.sdr_display_p3"
+              default="false"
+    ></Checkbox>
+
+    <!-- Force Limited Range for HDR -->
+    <Checkbox class="mb-3"
+              id="hdr_limited_range"
+              locale-prefix="config"
+              v-model="config.hdr_limited_range"
+              default="false"
+    ></Checkbox>
+
     <!-- SudoVDA Driver Status -->
     <div class="alert" :class="[vdisplay ? 'alert-warning' : 'alert-success']" v-if="platform === 'windows'">
       <i class="fa-solid fa-xl fa-circle-info"></i> SudoVDA Driver status: {{currentDriverStatus}}
