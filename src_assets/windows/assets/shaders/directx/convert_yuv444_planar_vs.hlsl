@@ -8,6 +8,7 @@ cbuffer color_matrix_cbuffer : register(b3) {
     float4 color_vec_v;
     float2 range_y;
     float2 range_uv;
+    float4 gamma_params;
 };
 
 #define PLANAR_VIEWPORTS

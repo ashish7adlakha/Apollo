@@ -80,6 +80,10 @@ namespace video {
         BOOST_LOG(info) << "HDR Color Range: HDMI Legal Range Remapping enabled (anti-clipping)";
         colorspace.full_range = false;
         colorspace.legal_remap = true;
+        if (config::video.hdr_shadow_gamma > 0.1f) {
+          colorspace.hdr_shadow_gamma = config::video.hdr_shadow_gamma;
+          BOOST_LOG(info) << "HDR Shadow Curve Gamma: " << colorspace.hdr_shadow_gamma;
+        }
       } else {
         // "auto" or legacy fallback
         if (config::video.hdr_limited_range) {
@@ -89,8 +93,18 @@ namespace video {
           BOOST_LOG(info) << "HDR Color Range: Auto (Client requested: " << (colorspace.full_range ? "Full" : "Limited") << ")";
         }
       }
-      if (colorspace.black_lift > 0) {
-        BOOST_LOG(info) << "HDR Black Level Lift: +" << colorspace.black_lift;
+      if (colorspace.black_lift != 0) {
+        BOOST_LOG(info) << "HDR Black Level Lift: " << (colorspace.black_lift > 0 ? "+" : "") << colorspace.black_lift;
+      }
+    } else {
+      // SDR Gamma Calibration (madVR-style)
+      if (config::video.sdr_display_gamma > 0.1f && config::video.sdr_target_gamma > 0.1f) {
+        colorspace.sdr_gamma_power = config::video.sdr_target_gamma / config::video.sdr_display_gamma;
+        if (std::abs(colorspace.sdr_gamma_power - 1.0f) > 0.001f) {
+          BOOST_LOG(info) << "SDR Gamma Calibration: Display Gamma " << config::video.sdr_display_gamma
+                          << " -> Target Gamma " << config::video.sdr_target_gamma
+                          << " (correction power: " << colorspace.sdr_gamma_power << ")";
+        }
       }
     }
 
@@ -170,9 +184,9 @@ namespace video {
   }
 
   const color_t *color_vectors_from_colorspace(const sunshine_colorspace_t &colorspace) {
-    if (colorspace.legal_remap || colorspace.black_lift > 0) {
+    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f || colorspace.hdr_shadow_gamma != 1.0f) {
       using float2 = float[2];
-      auto make_custom_matrix = [](float Cr, float Cb, const float2 &range_Y, const float2 &range_UV) -> color_t {
+      auto make_custom_matrix = [&](float Cr, float Cb, const float2 &range_Y, const float2 &range_UV) -> color_t {
         float Cg = 1.0f - Cr - Cb;
 
         float Cr_i = 1.0f - Cr;
@@ -189,6 +203,7 @@ namespace video {
           {0.5f, -(Cg * 0.5f / Cr_i), -(Cb * 0.5f / Cr_i), 0.5f},
           {scale_y, shift_y},
           {scale_uv, shift_uv},
+          {colorspace.sdr_gamma_power, colorspace.hdr_shadow_gamma, 0.0f, 0.0f},
         };
       };
 
@@ -206,10 +221,10 @@ namespace video {
 
       if (colorspace.legal_remap) {
         // Safe HDMI legal passband remapping:
-        // Maps 0..1 to 29.75..217.25 (119..869 in 10-bit) so that Android's
-        // Limited->Full expansion results in exactly [64, 940] on HDMI output,
-        // completely avoiding hardware black crushing (<64) and highlight clipping (>940).
-        y_min = 29.75f + ((float)colorspace.black_lift * 0.5f);
+        // Baseline 29.75 (119 in 10-bit), adjustable via black_lift (-30 to +30).
+        // Negative black_lift lowers y_min towards standard limited range 16.0 (64 in 10-bit),
+        // allowing fine-tuning to find the exact hardware crush threshold.
+        y_min = std::clamp(29.75f + ((float)colorspace.black_lift * 0.5f), 16.0f, 64.0f);
         y_max = 217.25f;
 
         float scale_y = (y_max - y_min) / 255.0f;
@@ -218,11 +233,13 @@ namespace video {
         uv_min = shift_uv * 255.0f;
         uv_max = uv_min + scale_uv * 255.0f;
       } else {
-        // Standard limited range with optional black lift
-        y_min = 16.0f + ((float)colorspace.black_lift * 0.5f);
-        y_max = 235.0f;
-        uv_min = 16.0f;
-        uv_max = 240.0f;
+        // Standard range with optional black lift
+        float base_y_min = colorspace.full_range ? 0.0f : 16.0f;
+        float base_y_max = colorspace.full_range ? 255.0f : 235.0f;
+        y_min = std::clamp(base_y_min + ((float)colorspace.black_lift * 0.5f), 0.0f, 64.0f);
+        y_max = base_y_max;
+        uv_min = colorspace.full_range ? 0.0f : 16.0f;
+        uv_max = colorspace.full_range ? 255.0f : 240.0f;
       }
 
       static thread_local color_t custom_color;
@@ -252,6 +269,7 @@ namespace video {
         {0.5f, -(Cg * 0.5f / Cr_i), -(Cb * 0.5f / Cr_i), 0.5f},
         {scale_y, shift_y},
         {scale_uv, shift_uv},
+        {1.0f, 1.0f, 0.0f, 0.0f},
       };
     };
 
@@ -299,6 +317,7 @@ namespace video {
         {v_p3[0], v_p3[1], v_p3[2], 0.5f},
         {scale_y, shift_y},
         {scale_uv, shift_uv},
+        {1.0f, 1.0f, 0.0f, 0.0f},
       };
     };
 
@@ -441,11 +460,15 @@ namespace video {
       color_vectors.range_y[1] = 0;
       color_vectors.range_uv[0] = 1;
       color_vectors.range_uv[1] = 0;
+      color_vectors.gamma_params[0] = colorspace.sdr_gamma_power;
+      color_vectors.gamma_params[1] = colorspace.hdr_shadow_gamma;
+      color_vectors.gamma_params[2] = 0.0f;
+      color_vectors.gamma_params[3] = 0.0f;
 
       return color_vectors;
     };
 
-    if (colorspace.legal_remap || colorspace.black_lift > 0) {
+    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f || colorspace.hdr_shadow_gamma != 1.0f) {
       static thread_local color_t custom_color;
       custom_color = generate_color_vectors(colorspace);
       return &custom_color;

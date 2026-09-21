@@ -178,6 +178,20 @@ const validateFallbackMode = (event) => {
               default="false"
     ></Checkbox>
 
+    <!-- SDR Display Gamma Calibration -->
+    <div class="mb-3">
+      <label for="sdr_display_gamma" class="form-label">{{ $t('config.sdr_display_gamma') }}</label>
+      <input type="number" class="form-control" id="sdr_display_gamma" placeholder="2.2" min="1.0" max="3.0" step="0.05" v-model="config.sdr_display_gamma" />
+      <div class="form-text">{{ $t('config.sdr_display_gamma_desc') }}</div>
+    </div>
+
+    <!-- SDR Target Gamma -->
+    <div class="mb-3">
+      <label for="sdr_target_gamma" class="form-label">{{ $t('config.sdr_target_gamma') }}</label>
+      <input type="number" class="form-control" id="sdr_target_gamma" placeholder="2.2" min="1.0" max="3.0" step="0.05" v-model="config.sdr_target_gamma" />
+      <div class="form-text">{{ $t('config.sdr_target_gamma_desc') }}</div>
+    </div>
+
     <!-- HDR Color Range -->
     <div class="mb-3">
       <label for="hdr_color_range" class="form-label">{{ $t('config.hdr_color_range') }}</label>
@@ -200,8 +214,15 @@ const validateFallbackMode = (event) => {
     <!-- HDR Black Level Lift -->
     <div class="mb-3">
       <label for="hdr_black_lift" class="form-label">{{ $t('config.hdr_black_lift') }}</label>
-      <input type="number" class="form-control" id="hdr_black_lift" placeholder="0" min="0" max="30" v-model="config.hdr_black_lift" />
+      <input type="number" class="form-control" id="hdr_black_lift" placeholder="0" min="-30" max="30" v-model="config.hdr_black_lift" />
       <div class="form-text">{{ $t('config.hdr_black_lift_desc') }}</div>
+    </div>
+
+    <!-- HDR Shadow Curve (Toe Gamma) -->
+    <div class="mb-3">
+      <label for="hdr_shadow_gamma" class="form-label">{{ $t('config.hdr_shadow_gamma') }}</label>
+      <input type="number" class="form-control" id="hdr_shadow_gamma" placeholder="1.25" min="0.8" max="2.5" step="0.05" v-model="config.hdr_shadow_gamma" />
+      <div class="form-text">{{ $t('config.hdr_shadow_gamma_desc') }}</div>
     </div>
 
     <!-- SudoVDA Driver Status -->

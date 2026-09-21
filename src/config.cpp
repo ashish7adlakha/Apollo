@@ -522,6 +522,9 @@ namespace config {
     "auto",// hdr_color_range
     0,     // hdr_max_luminance
     0,     // hdr_black_lift
+    2.2f,  // sdr_display_gamma
+    2.2f,  // sdr_target_gamma
+    1.25f, // hdr_shadow_gamma
   };
 
   audio_t audio {
@@ -913,6 +916,17 @@ namespace config {
     }
   }
 
+  void float_between_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, float &input, const std::pair<float, float> &range) {
+    double temp = input;
+
+    double_f(vars, name, temp);
+
+    TUPLE_2D_REF(lower, upper, range);
+    if (temp >= lower && temp <= upper) {
+      input = (float) temp;
+    }
+  }
+
   void list_string_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::vector<std::string> &input) {
     std::string string;
     string_f(vars, name, string);
@@ -1220,7 +1234,10 @@ namespace config {
     string_f(vars, "sdr_colorspace", video.sdr_colorspace);
     string_f(vars, "hdr_color_range", video.hdr_color_range);
     int_between_f(vars, "hdr_max_luminance", video.hdr_max_luminance, {0, 10000});
-    int_between_f(vars, "hdr_black_lift", video.hdr_black_lift, {0, 30});
+    int_between_f(vars, "hdr_black_lift", video.hdr_black_lift, {-30, 30});
+    float_between_f(vars, "sdr_display_gamma", video.sdr_display_gamma, {1.0f, 3.0f});
+    float_between_f(vars, "sdr_target_gamma", video.sdr_target_gamma, {1.0f, 3.0f});
+    float_between_f(vars, "hdr_shadow_gamma", video.hdr_shadow_gamma, {0.8f, 2.5f});
 
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);

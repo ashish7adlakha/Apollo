@@ -24,6 +24,8 @@ namespace video {
     unsigned bit_depth;
     bool legal_remap = false;
     int black_lift = 0;
+    float sdr_gamma_power = 1.0f;
+    float hdr_shadow_gamma = 1.0f;
   };
 
   bool colorspace_is_hdr(const sunshine_colorspace_t &colorspace);
@@ -49,6 +51,7 @@ namespace video {
     float color_vec_v[4];
     float range_y[2];
     float range_uv[2];
+    float gamma_params[4];
   };
 
   const color_t *color_vectors_from_colorspace(const sunshine_colorspace_t &colorspace);

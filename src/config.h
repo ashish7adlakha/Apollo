@@ -155,6 +155,9 @@ namespace config {
     std::string hdr_color_range;
     int hdr_max_luminance;
     int hdr_black_lift;
+    float sdr_display_gamma;
+    float sdr_target_gamma;
+    float hdr_shadow_gamma;
   };
 
   struct audio_t {
