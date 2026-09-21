@@ -69,8 +69,8 @@ namespace nvenc {
         break;
 
       case video::colorspace_e::display_p3:
-        // Display P3 (SMPTE 432 / D65)
-        colorspace.primaries = (NV_ENC_VUI_COLOR_PRIMARIES) 12;
+        // Clamped to Display P3 coordinates, signaled as BT.709 so client and display don't apply an extra gamut boost
+        colorspace.primaries = NV_ENC_VUI_COLOR_PRIMARIES_BT709;
         colorspace.tranfer_function = NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT709;
         colorspace.matrix = NV_ENC_VUI_MATRIX_COEFFS_BT709;
         break;

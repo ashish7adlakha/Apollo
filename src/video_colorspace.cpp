@@ -113,8 +113,8 @@ namespace video {
         break;
 
       case colorspace_e::display_p3:
-        // Display P3 (SMPTE 432 / D65)
-        avcodec_colorspace.primaries = AVCOL_PRI_SMPTE432;
+        // Clamped to Display P3 coordinates, signaled as BT.709 so Android and display don't apply an extra gamut boost
+        avcodec_colorspace.primaries = AVCOL_PRI_BT709;
         avcodec_colorspace.transfer_function = AVCOL_TRC_BT709;
         avcodec_colorspace.matrix = AVCOL_SPC_BT709;
         avcodec_colorspace.software_format = SWS_CS_ITU709;
@@ -170,6 +170,53 @@ namespace video {
       };
     };
 
+    auto make_clamped_color_matrix = [](float Cr, float Cb, const float2 &range_Y, const float2 &range_UV) -> color_t {
+      float Cg = 1.0f - Cr - Cb;
+
+      float Cr_i = 1.0f - Cr;
+      float Cb_i = 1.0f - Cb;
+
+      float shift_y = range_Y[0] / 255.0f;
+      float shift_uv = range_UV[0] / 255.0f;
+
+      float scale_y = (range_Y[1] - range_Y[0]) / 255.0f;
+      float scale_uv = (range_UV[1] - range_UV[0]) / 255.0f;
+
+      // sRGB to Display P3 (D65) transformation matrix coefficients
+      constexpr float m00 = 0.822462f, m01 = 0.177538f, m02 = 0.000000f;
+      constexpr float m10 = 0.033194f, m11 = 0.966806f, m12 = 0.000000f;
+      constexpr float m20 = 0.017083f, m21 = 0.072397f, m22 = 0.910520f;
+
+      float y0 = Cr, y1 = Cg, y2 = Cb;
+      float y_p3[3] = {
+        y0 * m00 + y1 * m10 + y2 * m20,
+        y0 * m01 + y1 * m11 + y2 * m21,
+        y0 * m02 + y1 * m12 + y2 * m22
+      };
+
+      float u0 = -(Cr * 0.5f / Cb_i), u1 = -(Cg * 0.5f / Cb_i), u2 = 0.5f;
+      float u_p3[3] = {
+        u0 * m00 + u1 * m10 + u2 * m20,
+        u0 * m01 + u1 * m11 + u2 * m21,
+        u0 * m02 + u1 * m12 + u2 * m22
+      };
+
+      float v0 = 0.5f, v1 = -(Cg * 0.5f / Cr_i), v2 = -(Cb * 0.5f / Cr_i);
+      float v_p3[3] = {
+        v0 * m00 + v1 * m10 + v2 * m20,
+        v0 * m01 + v1 * m11 + v2 * m21,
+        v0 * m02 + v1 * m12 + v2 * m22
+      };
+
+      return {
+        {y_p3[0], y_p3[1], y_p3[2], 0.0f},
+        {u_p3[0], u_p3[1], u_p3[2], 0.5f},
+        {v_p3[0], v_p3[1], v_p3[2], 0.5f},
+        {scale_y, shift_y},
+        {scale_uv, shift_uv},
+      };
+    };
+
     static const color_t colors[] {
       make_color_matrix(0.299f, 0.114f, {16.0f, 235.0f}, {16.0f, 240.0f}),  // BT601 MPEG
       make_color_matrix(0.299f, 0.114f, {0.0f, 255.0f}, {0.0f, 255.0f}),  // BT601 JPEG
@@ -177,6 +224,8 @@ namespace video {
       make_color_matrix(0.2126f, 0.0722f, {0.0f, 255.0f}, {0.0f, 255.0f}),  // BT709 JPEG
       make_color_matrix(0.2627f, 0.0593f, {16.0f, 235.0f}, {16.0f, 240.0f}),  // BT2020 MPEG
       make_color_matrix(0.2627f, 0.0593f, {0.0f, 255.0f}, {0.0f, 255.0f}),  // BT2020 JPEG
+      make_clamped_color_matrix(0.2126f, 0.0722f, {16.0f, 235.0f}, {16.0f, 240.0f}),  // P3 Clamped MPEG
+      make_clamped_color_matrix(0.2126f, 0.0722f, {0.0f, 255.0f}, {0.0f, 255.0f}),  // P3 Clamped JPEG
     };
 
     const color_t *result = nullptr;
@@ -187,12 +236,14 @@ namespace video {
         result = &colors[0];
         break;
       case colorspace_e::rec709:
-      case colorspace_e::display_p3:
         result = &colors[2];
         break;
       case colorspace_e::bt2020:
       case colorspace_e::bt2020sdr:
         result = &colors[4];
+        break;
+      case colorspace_e::display_p3:
+        result = &colors[6];
         break;
     };
 
@@ -262,6 +313,34 @@ namespace video {
       color_vectors.color_vec_v[2] = -0.5 * Kb / (1.0 - Kr) * uv_mult;
       color_vectors.color_vec_v[3] = uv_add;
 
+      if (colorspace.colorspace == colorspace_e::display_p3) {
+        // sRGB to Display P3 (D65) transformation matrix coefficients
+        constexpr double m00 = 0.822462, m01 = 0.177538, m02 = 0.000000;
+        constexpr double m10 = 0.033194, m11 = 0.966806, m12 = 0.000000;
+        constexpr double m20 = 0.017083, m21 = 0.072397, m22 = 0.910520;
+
+        double y0 = color_vectors.color_vec_y[0];
+        double y1 = color_vectors.color_vec_y[1];
+        double y2 = color_vectors.color_vec_y[2];
+        color_vectors.color_vec_y[0] = (float)(y0 * m00 + y1 * m10 + y2 * m20);
+        color_vectors.color_vec_y[1] = (float)(y0 * m01 + y1 * m11 + y2 * m21);
+        color_vectors.color_vec_y[2] = (float)(y0 * m02 + y1 * m12 + y2 * m22);
+
+        double u0 = color_vectors.color_vec_u[0];
+        double u1 = color_vectors.color_vec_u[1];
+        double u2 = color_vectors.color_vec_u[2];
+        color_vectors.color_vec_u[0] = (float)(u0 * m00 + u1 * m10 + u2 * m20);
+        color_vectors.color_vec_u[1] = (float)(u0 * m01 + u1 * m11 + u2 * m21);
+        color_vectors.color_vec_u[2] = (float)(u0 * m02 + u1 * m12 + u2 * m22);
+
+        double v0 = color_vectors.color_vec_v[0];
+        double v1 = color_vectors.color_vec_v[1];
+        double v2 = color_vectors.color_vec_v[2];
+        color_vectors.color_vec_v[0] = (float)(v0 * m00 + v1 * m10 + v2 * m20);
+        color_vectors.color_vec_v[1] = (float)(v0 * m01 + v1 * m11 + v2 * m21);
+        color_vectors.color_vec_v[2] = (float)(v0 * m02 + v1 * m12 + v2 * m22);
+      }
+
       // Unused
       color_vectors.range_y[0] = 1;
       color_vectors.range_y[1] = 0;
@@ -284,6 +363,10 @@ namespace video {
       generate_color_vectors({colorspace_e::bt2020, true, 8}),
       generate_color_vectors({colorspace_e::bt2020, false, 10}),
       generate_color_vectors({colorspace_e::bt2020, true, 10}),
+      generate_color_vectors({colorspace_e::display_p3, false, 8}),
+      generate_color_vectors({colorspace_e::display_p3, true, 8}),
+      generate_color_vectors({colorspace_e::display_p3, false, 10}),
+      generate_color_vectors({colorspace_e::display_p3, true, 10}),
     };
 
     const color_t *result = nullptr;
@@ -293,13 +376,15 @@ namespace video {
         result = &colors[0];
         break;
       case colorspace_e::rec709:
-      case colorspace_e::display_p3:
       default:
         result = &colors[4];
         break;
       case colorspace_e::bt2020:
       case colorspace_e::bt2020sdr:
         result = &colors[8];
+        break;
+      case colorspace_e::display_p3:
+        result = &colors[12];
         break;
     }
 

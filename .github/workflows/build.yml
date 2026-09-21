@@ -11,6 +11,12 @@ jobs:
   build-windows:
     runs-on: windows-latest
 
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "true"
+      CCACHE_COMPRESSLEVEL: "6"
+      CCACHE_MAXSIZE: "2G"
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -23,11 +29,22 @@ jobs:
         with:
           node-version: 20
 
+      - name: Cache Node modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: true
+          cache: true
           path-type: inherit
           install: >-
             git
@@ -44,18 +61,31 @@ jobs:
             mingw-w64-ucrt-x86_64-openssl
             mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-nlohmann_json
+            mingw-w64-ucrt-x86_64-ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
 
       - name: Configure CMake
         shell: msys2 {0}
         run: |
           cmake -B build -G Ninja -S . \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DSUNSHINE_PUBLISHER_NAME="${{ github.repository_owner }}"
 
       - name: Build Apollo
         shell: msys2 {0}
         run: |
+          ccache -z
           ninja -C build
+          ccache -s
 
       - name: Package
         shell: msys2 {0}

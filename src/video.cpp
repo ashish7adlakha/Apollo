@@ -2119,7 +2119,7 @@ namespace video {
       auto color_coding = colorspace.colorspace == colorspace_e::bt2020     ? "HDR (Rec. 2020 + SMPTE 2084 PQ)" :
                           colorspace.colorspace == colorspace_e::rec601     ? "SDR (Rec. 601)" :
                           colorspace.colorspace == colorspace_e::rec709     ? "SDR (Rec. 709)" :
-                          colorspace.colorspace == colorspace_e::display_p3 ? "SDR (Display P3)" :
+                          colorspace.colorspace == colorspace_e::display_p3 ? "SDR (sRGB clamped for Display P3)" :
                           colorspace.colorspace == colorspace_e::bt2020sdr  ? "SDR (Rec. 2020)" :
                                                                               "unknown";
 
