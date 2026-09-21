@@ -22,6 +22,8 @@ namespace video {
     colorspace_e colorspace;
     bool full_range;
     unsigned bit_depth;
+    bool legal_remap = false;
+    int black_lift = 0;
   };
 
   bool colorspace_is_hdr(const sunshine_colorspace_t &colorspace);

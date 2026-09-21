@@ -152,6 +152,9 @@ namespace config {
     bool sdr_display_p3;
     bool hdr_limited_range;
     std::string sdr_colorspace;
+    std::string hdr_color_range;
+    int hdr_max_luminance;
+    int hdr_black_lift;
   };
 
   struct audio_t {

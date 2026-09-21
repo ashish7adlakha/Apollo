@@ -519,6 +519,9 @@ namespace config {
     false, // sdr_display_p3
     false, // hdr_limited_range
     {},    // sdr_colorspace
+    "auto",// hdr_color_range
+    0,     // hdr_max_luminance
+    0,     // hdr_black_lift
   };
 
   audio_t audio {
@@ -1215,6 +1218,9 @@ namespace config {
     bool_f(vars, "sdr_display_p3", video.sdr_display_p3);
     bool_f(vars, "hdr_limited_range", video.hdr_limited_range);
     string_f(vars, "sdr_colorspace", video.sdr_colorspace);
+    string_f(vars, "hdr_color_range", video.hdr_color_range);
+    int_between_f(vars, "hdr_max_luminance", video.hdr_max_luminance, {0, 10000});
+    int_between_f(vars, "hdr_black_lift", video.hdr_black_lift, {0, 30});
 
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);

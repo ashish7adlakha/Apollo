@@ -178,13 +178,31 @@ const validateFallbackMode = (event) => {
               default="false"
     ></Checkbox>
 
-    <!-- Force Limited Range for HDR -->
-    <Checkbox class="mb-3"
-              id="hdr_limited_range"
-              locale-prefix="config"
-              v-model="config.hdr_limited_range"
-              default="false"
-    ></Checkbox>
+    <!-- HDR Color Range -->
+    <div class="mb-3">
+      <label for="hdr_color_range" class="form-label">{{ $t('config.hdr_color_range') }}</label>
+      <select id="hdr_color_range" class="form-select" v-model="config.hdr_color_range">
+        <option value="auto">{{ $t('config.hdr_color_range_auto') }}</option>
+        <option value="limited">{{ $t('config.hdr_color_range_limited') }}</option>
+        <option value="full">{{ $t('config.hdr_color_range_full') }}</option>
+        <option value="remap">{{ $t('config.hdr_color_range_remap') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.hdr_color_range_desc') }}</div>
+    </div>
+
+    <!-- HDR Max Luminance -->
+    <div class="mb-3">
+      <label for="hdr_max_luminance" class="form-label">{{ $t('config.hdr_max_luminance') }}</label>
+      <input type="number" class="form-control" id="hdr_max_luminance" placeholder="0" min="0" max="10000" v-model="config.hdr_max_luminance" />
+      <div class="form-text">{{ $t('config.hdr_max_luminance_desc') }}</div>
+    </div>
+
+    <!-- HDR Black Level Lift -->
+    <div class="mb-3">
+      <label for="hdr_black_lift" class="form-label">{{ $t('config.hdr_black_lift') }}</label>
+      <input type="number" class="form-control" id="hdr_black_lift" placeholder="0" min="0" max="30" v-model="config.hdr_black_lift" />
+      <div class="form-text">{{ $t('config.hdr_black_lift_desc') }}</div>
+    </div>
 
     <!-- SudoVDA Driver Status -->
     <div class="alert" :class="[vdisplay ? 'alert-warning' : 'alert-success']" v-if="platform === 'windows'">

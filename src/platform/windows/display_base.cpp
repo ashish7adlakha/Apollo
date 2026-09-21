@@ -796,14 +796,19 @@ namespace platf::dxgi {
     metadata.whitePoint.x = desc1.WhitePoint[0] * 50000;
     metadata.whitePoint.y = desc1.WhitePoint[1] * 50000;
 
-    metadata.maxDisplayLuminance = desc1.MaxLuminance;
+    if (config::video.hdr_max_luminance > 0) {
+      BOOST_LOG(info) << "Overriding HDR Max Luminance to " << config::video.hdr_max_luminance << " nits (reported by display: " << desc1.MaxLuminance << " nits)";
+      metadata.maxDisplayLuminance = config::video.hdr_max_luminance;
+      metadata.maxFullFrameLuminance = config::video.hdr_max_luminance;
+    } else {
+      metadata.maxDisplayLuminance = desc1.MaxLuminance;
+      metadata.maxFullFrameLuminance = desc1.MaxFullFrameLuminance;
+    }
     metadata.minDisplayLuminance = desc1.MinLuminance * 10000;
 
     // These are content-specific metadata parameters that this interface doesn't give us
     metadata.maxContentLightLevel = 0;
     metadata.maxFrameAverageLightLevel = 0;
-
-    metadata.maxFullFrameLuminance = desc1.MaxFullFrameLuminance;
 
     return true;
   }
