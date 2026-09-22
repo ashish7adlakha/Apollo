@@ -70,6 +70,11 @@ namespace video {
     if (colorspace_is_hdr(colorspace)) {
       colorspace.black_lift = config::video.hdr_black_lift;
 
+      if (config::video.hdr_max_luminance > 0) {
+        colorspace.hdr_max_luminance = (float) config::video.hdr_max_luminance;
+        BOOST_LOG(info) << "HDR Peak Luminance Target: " << colorspace.hdr_max_luminance << " nits";
+      }
+
       if (config::video.hdr_color_range == "limited"sv) {
         BOOST_LOG(info) << "HDR Color Range: Forcing Limited Range (64-940)";
         colorspace.full_range = false;
@@ -184,7 +189,7 @@ namespace video {
   }
 
   const color_t *color_vectors_from_colorspace(const sunshine_colorspace_t &colorspace) {
-    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f || colorspace.hdr_shadow_gamma != 1.0f) {
+    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f || colorspace.hdr_shadow_gamma != 1.0f || colorspace.hdr_max_luminance > 0.0f) {
       using float2 = float[2];
       // sRGB to Display P3 (D65) transformation matrix coefficients.
       // Applied when colorspace is display_p3 to preserve the sRGB-clamp behavior
@@ -234,7 +239,7 @@ namespace video {
           {v0, v1, v2, 0.5f},
           {scale_y, shift_y},
           {scale_uv, shift_uv},
-          {colorspace.sdr_gamma_power, colorspace.hdr_shadow_gamma, 0.0f, 0.0f},
+          {colorspace.sdr_gamma_power, colorspace.hdr_shadow_gamma, colorspace.hdr_max_luminance, 0.0f},
         };
       };
 
@@ -492,13 +497,13 @@ namespace video {
       color_vectors.range_uv[1] = 0;
       color_vectors.gamma_params[0] = colorspace.sdr_gamma_power;
       color_vectors.gamma_params[1] = colorspace.hdr_shadow_gamma;
-      color_vectors.gamma_params[2] = 0.0f;
+      color_vectors.gamma_params[2] = colorspace.hdr_max_luminance;
       color_vectors.gamma_params[3] = 0.0f;
 
       return color_vectors;
     };
 
-    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f || colorspace.hdr_shadow_gamma != 1.0f) {
+    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f || colorspace.hdr_shadow_gamma != 1.0f || colorspace.hdr_max_luminance > 0.0f) {
       static thread_local color_t custom_color;
       custom_color = generate_color_vectors(colorspace);
       return &custom_color;

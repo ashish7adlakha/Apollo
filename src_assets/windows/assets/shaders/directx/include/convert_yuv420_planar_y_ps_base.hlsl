@@ -25,9 +25,7 @@ float main_ps(vertex_t input) : SV_Target
     float y = dot(color_vec_y.xyz, rgb) + color_vec_y.w;
 
 #if defined(PERCEPTUAL_QUANTIZER)
-    if (gamma_params.y != 1.0f) {
-        y = pow(saturate(y), gamma_params.y);
-    }
+    y = ApplyHDRShadowToe(saturate(y), gamma_params.y);
 #endif
 
     return y * range_y.x + range_y.y;

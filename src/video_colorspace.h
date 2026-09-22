@@ -26,6 +26,7 @@ namespace video {
     int black_lift = 0;
     float sdr_gamma_power = 1.0f;
     float hdr_shadow_gamma = 1.0f;
+    float hdr_max_luminance = 0.0f;
   };
 
   bool colorspace_is_hdr(const sunshine_colorspace_t &colorspace);
