@@ -186,6 +186,14 @@ namespace video {
   const color_t *color_vectors_from_colorspace(const sunshine_colorspace_t &colorspace) {
     if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f || colorspace.hdr_shadow_gamma != 1.0f) {
       using float2 = float[2];
+      // sRGB to Display P3 (D65) transformation matrix coefficients.
+      // Applied when colorspace is display_p3 to preserve the sRGB-clamp behavior
+      // even when gamma correction is active.
+      constexpr float m00 = 0.822462f, m01 = 0.177538f, m02 = 0.000000f;
+      constexpr float m10 = 0.033194f, m11 = 0.966806f, m12 = 0.000000f;
+      constexpr float m20 = 0.017083f, m21 = 0.072397f, m22 = 0.910520f;
+      bool apply_p3 = (colorspace.colorspace == colorspace_e::display_p3);
+
       auto make_custom_matrix = [&](float Cr, float Cb, const float2 &range_Y, const float2 &range_UV) -> color_t {
         float Cg = 1.0f - Cr - Cb;
 
@@ -197,10 +205,33 @@ namespace video {
 
         float scale_y = (range_Y[1] - range_Y[0]) / 255.0f;
         float scale_uv = (range_UV[1] - range_UV[0]) / 255.0f;
+
+        float y0 = Cr, y1 = Cg, y2 = Cb;
+        float u0 = -(Cr * 0.5f / Cb_i), u1 = -(Cg * 0.5f / Cb_i), u2 = 0.5f;
+        float v0 = 0.5f, v1 = -(Cg * 0.5f / Cr_i), v2 = -(Cb * 0.5f / Cr_i);
+
+        if (apply_p3) {
+          // Transform color vectors into Display P3 space for sRGB-clamp
+          float y0p = y0 * m00 + y1 * m10 + y2 * m20;
+          float y1p = y0 * m01 + y1 * m11 + y2 * m21;
+          float y2p = y0 * m02 + y1 * m12 + y2 * m22;
+          y0 = y0p; y1 = y1p; y2 = y2p;
+
+          float u0p = u0 * m00 + u1 * m10 + u2 * m20;
+          float u1p = u0 * m01 + u1 * m11 + u2 * m21;
+          float u2p = u0 * m02 + u1 * m12 + u2 * m22;
+          u0 = u0p; u1 = u1p; u2 = u2p;
+
+          float v0p = v0 * m00 + v1 * m10 + v2 * m20;
+          float v1p = v0 * m01 + v1 * m11 + v2 * m21;
+          float v2p = v0 * m02 + v1 * m12 + v2 * m22;
+          v0 = v0p; v1 = v1p; v2 = v2p;
+        }
+
         return {
-          {Cr, Cg, Cb, 0.0f},
-          {-(Cr * 0.5f / Cb_i), -(Cg * 0.5f / Cb_i), 0.5f, 0.5f},
-          {0.5f, -(Cg * 0.5f / Cr_i), -(Cb * 0.5f / Cr_i), 0.5f},
+          {y0, y1, y2, 0.0f},
+          {u0, u1, u2, 0.5f},
+          {v0, v1, v2, 0.5f},
           {scale_y, shift_y},
           {scale_uv, shift_uv},
           {colorspace.sdr_gamma_power, colorspace.hdr_shadow_gamma, 0.0f, 0.0f},
@@ -220,7 +251,6 @@ namespace video {
       float uv_min, uv_max;
 
       if (colorspace.legal_remap) {
-        // Safe HDMI legal passband remapping:
         // Baseline 29.75 (119 in 10-bit), adjustable via black_lift (-30 to +30).
         // Negative black_lift lowers y_min towards standard limited range 16.0 (64 in 10-bit),
         // allowing fine-tuning to find the exact hardware crush threshold.
