@@ -97,6 +97,20 @@ namespace video {
         BOOST_LOG(info) << "HDR Black Level Lift: " << (colorspace.black_lift > 0 ? "+" : "") << colorspace.black_lift;
       }
     } else {
+      if (config::video.sdr_color_range == "limited"sv) {
+        BOOST_LOG(info) << "SDR Color Range: Forcing Limited Range (16-235)";
+        colorspace.full_range = false;
+      } else if (config::video.sdr_color_range == "full"sv) {
+        BOOST_LOG(info) << "SDR Color Range: Forcing Full Range (0-255)";
+        colorspace.full_range = true;
+      } else if (config::video.sdr_color_range == "remap"sv) {
+        BOOST_LOG(info) << "SDR Color Range: HDMI Legal Range Remapping enabled (anti-clipping)";
+        colorspace.full_range = false;
+        colorspace.legal_remap = true;
+      } else {
+        BOOST_LOG(info) << "SDR Color Range: Auto (Client requested: " << (colorspace.full_range ? "Full" : "Limited") << ")";
+      }
+
       // SDR Gamma Calibration (madVR-style)
       if (config::video.sdr_display_gamma > 0.1f && config::video.sdr_target_gamma > 0.1f) {
         colorspace.sdr_gamma_power = config::video.sdr_target_gamma / config::video.sdr_display_gamma;

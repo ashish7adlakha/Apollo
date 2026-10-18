@@ -519,8 +519,8 @@ namespace config {
     false, // sdr_display_p3
     false, // hdr_limited_range
     {},    // sdr_colorspace
+    "auto",// sdr_color_range
     "auto",// hdr_color_range
-    0,     // hdr_max_luminance
     0,     // hdr_black_lift
     2.2f,  // sdr_display_gamma
     2.2f,  // sdr_target_gamma
@@ -1232,8 +1232,8 @@ namespace config {
     bool_f(vars, "sdr_display_p3", video.sdr_display_p3);
     bool_f(vars, "hdr_limited_range", video.hdr_limited_range);
     string_f(vars, "sdr_colorspace", video.sdr_colorspace);
+    string_f(vars, "sdr_color_range", video.sdr_color_range);
     string_f(vars, "hdr_color_range", video.hdr_color_range);
-    int_between_f(vars, "hdr_max_luminance", video.hdr_max_luminance, {0, 10000});
     int_between_f(vars, "hdr_black_lift", video.hdr_black_lift, {-30, 30});
     float_between_f(vars, "sdr_display_gamma", video.sdr_display_gamma, {1.0f, 3.0f});
     float_between_f(vars, "sdr_target_gamma", video.sdr_target_gamma, {1.0f, 3.0f});

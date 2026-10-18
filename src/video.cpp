@@ -2125,7 +2125,15 @@ namespace video {
 
       BOOST_LOG(info) << "Color coding: " << color_coding;
       BOOST_LOG(info) << "Color depth: " << colorspace.bit_depth << "-bit";
-      BOOST_LOG(info) << "Color range: " << (colorspace.full_range ? "JPEG (Full Range 0-1023)" : (colorspace.legal_remap ? "MPEG (HDMI Legal Range Remap)" : "MPEG (Limited Range 64-940)"));
+      std::string color_range_str;
+      if (colorspace.full_range) {
+        color_range_str = colorspace.bit_depth == 10 ? "JPEG (Full Range 0-1023)" : "JPEG (Full Range 0-255)";
+      } else if (colorspace.legal_remap) {
+        color_range_str = "MPEG (HDMI Legal Range Remap)";
+      } else {
+        color_range_str = colorspace.bit_depth == 10 ? "MPEG (Limited Range 64-940)" : "MPEG (Limited Range 16-235)";
+      }
+      BOOST_LOG(info) << "Color range: " << color_range_str;
     }
 
     if (dynamic_cast<const encoder_platform_formats_avcodec *>(encoder.platform_formats.get())) {
