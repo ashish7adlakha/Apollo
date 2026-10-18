@@ -480,7 +480,6 @@ namespace platf::dxgi {
         }
 
         bool is_test_pattern = false;
-        shader_res_t pattern_res;
         if (display && display->is_hdr()) {
           std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
           if (::video::active_hdr_calibration.test_pattern_active) {
@@ -492,7 +491,6 @@ namespace platf::dxgi {
               current_pattern_fullscreen = ::video::active_hdr_calibration.test_pattern_fullscreen;
               test_pattern_srv = create_test_pattern_texture(current_pattern_nits, current_pattern_fullscreen);
             }
-            pattern_res = test_pattern_srv;
           }
         }
 
@@ -506,8 +504,8 @@ namespace platf::dxgi {
         }
 
         // Draw captured frame or test pattern
-        if (is_test_pattern && pattern_res) {
-          draw(pattern_res, out_Y_or_YUV_viewports, out_UV_viewport);
+        if (is_test_pattern && test_pattern_srv) {
+          draw(test_pattern_srv, out_Y_or_YUV_viewports, out_UV_viewport);
         } else {
           draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
         }
@@ -1016,7 +1014,7 @@ namespace platf::dxgi {
       texture_desc.MipLevels = 1;
       texture_desc.ArraySize = 1;
       texture_desc.SampleDesc.Count = 1;
-      texture_desc.Usage = D3D11_USAGE_DEFAULT;
+      texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
       texture_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
       texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
@@ -1070,7 +1068,6 @@ namespace platf::dxgi {
     buf_t color_matrix;
     buf_t hdr_calibration_buffer;
     uint32_t active_calibration_version = 0;
-    texture2d_t test_pattern_texture;
     shader_res_t test_pattern_srv;
     float current_pattern_nits = -1.0f;
     bool current_pattern_fullscreen = false;
