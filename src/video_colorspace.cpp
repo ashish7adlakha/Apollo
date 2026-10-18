@@ -10,6 +10,10 @@
 #include "logging.h"
 #include "video.h"
 
+#include <algorithm>
+#include <cmath>
+#include <nlohmann/json.hpp>
+
 extern "C" {
 #include <libswscale/swscale.h>
 }
@@ -565,4 +569,98 @@ namespace video {
 
     return result;
   }
+
+  float nits_to_pq(float nits) {
+    if (nits <= 0.0f) return 0.0f;
+    constexpr float m1 = 2610.0f / 4096.0f / 4.0f;
+    constexpr float m2 = 2523.0f / 4096.0f * 128.0f;
+    constexpr float c1 = 3424.0f / 4096.0f;
+    constexpr float c2 = 2413.0f / 4096.0f * 32.0f;
+    constexpr float c3 = 2392.0f / 4096.0f * 32.0f;
+    float Lp = std::pow(std::clamp(nits / 10000.0f, 0.0f, 1.0f), m1);
+    return std::pow((c1 + c2 * Lp) / (1.0f + c3 * Lp), m2);
+  }
+
+  std::vector<hdr_calibration_point_t> default_hdr_calibration_points() {
+    return {
+      {0.0f, 0.0f, 0.0f, 0.0f},
+      {0.5f, 0.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 0.0f},
+      {2.0f, 0.0f, 0.0f, 0.0f},
+      {5.0f, 0.0f, 0.0f, 0.0f},
+      {10.0f, 0.0f, 0.0f, 0.0f},
+      {25.0f, 0.0f, 0.0f, 0.0f},
+      {50.0f, 0.0f, 0.0f, 0.0f},
+      {100.0f, 0.0f, 0.0f, 0.0f},
+      {200.0f, 0.0f, 0.0f, 0.0f},
+      {400.0f, 0.0f, 0.0f, 0.0f},
+      {800.0f, 0.0f, 0.0f, 0.0f},
+      {1000.0f, 0.0f, 0.0f, 0.0f},
+      {1200.0f, 0.0f, 0.0f, 0.0f},
+      {2000.0f, 0.0f, 0.0f, 0.0f},
+      {4000.0f, 0.0f, 0.0f, 0.0f},
+    };
+  }
+
+  hdr_calibration_cbuffer_t build_hdr_calibration_cbuffer(const std::vector<hdr_calibration_point_t> &points, bool enabled) {
+    hdr_calibration_cbuffer_t cb {};
+    auto pts = points.empty() ? default_hdr_calibration_points() : points;
+    std::sort(pts.begin(), pts.end(), [](const auto &a, const auto &b) {
+      return a.nits < b.nits;
+    });
+
+    size_t count = std::min<size_t>(pts.size(), 16);
+    cb.flags[0] = enabled ? 1.0f : 0.0f;
+    cb.flags[1] = static_cast<float>(count);
+
+    for (size_t i = 0; i < count; ++i) {
+      cb.points[i][0] = nits_to_pq(pts[i].nits);
+      cb.points[i][1] = pts[i].r_percent / 100.0f;
+      cb.points[i][2] = pts[i].g_percent / 100.0f;
+      cb.points[i][3] = pts[i].b_percent / 100.0f;
+    }
+    return cb;
+  }
+
+  std::string serialize_hdr_calibration(const std::vector<hdr_calibration_point_t> &points) {
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto &p : points) {
+      j.push_back({
+        {"nits", p.nits},
+        {"r", p.r_percent},
+        {"g", p.g_percent},
+        {"b", p.b_percent}
+      });
+    }
+    return j.dump();
+  }
+
+  std::vector<hdr_calibration_point_t> deserialize_hdr_calibration(const std::string &json_str) {
+    if (json_str.empty()) {
+      return default_hdr_calibration_points();
+    }
+    try {
+      auto j = nlohmann::json::parse(json_str);
+      if (!j.is_array() || j.empty()) {
+        return default_hdr_calibration_points();
+      }
+      std::vector<hdr_calibration_point_t> result;
+      for (const auto &item : j) {
+        hdr_calibration_point_t pt;
+        pt.nits = item.value("nits", 0.0f);
+        pt.r_percent = item.value("r", 0.0f);
+        pt.g_percent = item.value("g", 0.0f);
+        pt.b_percent = item.value("b", 0.0f);
+        result.push_back(pt);
+      }
+      std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
+        return a.nits < b.nits;
+      });
+      return result;
+    } catch (...) {
+      return default_hdr_calibration_points();
+    }
+  }
+
+  active_calibration_t active_hdr_calibration;
 }  // namespace video

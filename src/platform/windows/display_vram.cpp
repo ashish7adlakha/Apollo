@@ -28,6 +28,7 @@ extern "C" {
 #include "src/nvenc/nvenc_d3d11_on_cuda.h"
 #include "src/nvenc/nvenc_utils.h"
 #include "src/video.h"
+#include "src/video_colorspace.h"
 
 #if !defined(SUNSHINE_SHADERS_DIR)  // for testing this needs to be defined in cmake as we don't do an install
   #define SUNSHINE_SHADERS_DIR SUNSHINE_ASSETS_DIR "/shaders/directx"
@@ -62,6 +63,30 @@ namespace platf::dxgi {
     auto status = device->CreateBuffer(&buffer_desc, &init_data, &buf_p);
     if (status) {
       BOOST_LOG(error) << "Failed to create buffer: [0x"sv << util::hex(status).to_string_view() << ']';
+      return nullptr;
+    }
+
+    return buf_t {buf_p};
+  }
+
+  template<class T>
+  buf_t make_dynamic_buffer(device_t::pointer device, const T &t) {
+    static_assert(sizeof(T) % 16 == 0, "Buffer needs to be aligned on a 16-byte alignment");
+
+    D3D11_BUFFER_DESC buffer_desc {
+      sizeof(T),
+      D3D11_USAGE_DEFAULT,
+      D3D11_BIND_CONSTANT_BUFFER
+    };
+
+    D3D11_SUBRESOURCE_DATA init_data {
+      &t
+    };
+
+    buf_t::pointer buf_p;
+    auto status = device->CreateBuffer(&buffer_desc, &init_data, &buf_p);
+    if (status) {
+      BOOST_LOG(error) << "Failed to create dynamic buffer: [0x"sv << util::hex(status).to_string_view() << ']';
       return nullptr;
     }
 
@@ -434,6 +459,43 @@ namespace platf::dxgi {
           }
         };
 
+        if (display && display->is_hdr()) {
+          if (::video::active_hdr_calibration.version != active_calibration_version) {
+            std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
+            active_calibration_version = ::video::active_hdr_calibration.version;
+            auto calib_cb = ::video::build_hdr_calibration_cbuffer(
+              ::video::active_hdr_calibration.points,
+              ::video::active_hdr_calibration.enabled
+            );
+            if (!hdr_calibration_buffer) {
+              hdr_calibration_buffer = make_dynamic_buffer(device.get(), calib_cb);
+              if (hdr_calibration_buffer) {
+                device_ctx->PSSetConstantBuffers(1, 1, &hdr_calibration_buffer);
+              }
+            } else {
+              device_ctx->UpdateSubresource(hdr_calibration_buffer.get(), 0, nullptr, &calib_cb, 0, 0);
+              device_ctx->PSSetConstantBuffers(1, 1, &hdr_calibration_buffer);
+            }
+          }
+        }
+
+        bool is_test_pattern = false;
+        shader_res_t pattern_res;
+        if (display && display->is_hdr()) {
+          std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
+          if (::video::active_hdr_calibration.test_pattern_active) {
+            is_test_pattern = true;
+            if (!test_pattern_srv ||
+                current_pattern_nits != ::video::active_hdr_calibration.test_pattern_nits ||
+                current_pattern_fullscreen != ::video::active_hdr_calibration.test_pattern_fullscreen) {
+              current_pattern_nits = ::video::active_hdr_calibration.test_pattern_nits;
+              current_pattern_fullscreen = ::video::active_hdr_calibration.test_pattern_fullscreen;
+              test_pattern_srv = create_test_pattern_texture(current_pattern_nits, current_pattern_fullscreen);
+            }
+            pattern_res = test_pattern_srv;
+          }
+        }
+
         // Clear render target view(s) once so that the aspect ratio mismatch "bars" appear black
         if (!rtvs_cleared) {
           auto black = create_black_texture_for_rtv_clear();
@@ -443,8 +505,12 @@ namespace platf::dxgi {
           rtvs_cleared = true;
         }
 
-        // Draw captured frame
-        draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
+        // Draw captured frame or test pattern
+        if (is_test_pattern && pattern_res) {
+          draw(pattern_res, out_Y_or_YUV_viewports, out_UV_viewport);
+        } else {
+          draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
+        }
 
         // Release encoder mutex to allow capture code to reuse this image
         img_ctx.encoder_mutex->ReleaseSync(0);
@@ -479,6 +545,19 @@ namespace platf::dxgi {
       device_ctx->VSSetConstantBuffers(3, 1, &color_matrix);
       device_ctx->PSSetConstantBuffers(0, 1, &color_matrix);
       this->color_matrix = std::move(color_matrix);
+
+      if (display && display->is_hdr()) {
+        std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
+        active_calibration_version = ::video::active_hdr_calibration.version;
+        auto calib_cb = ::video::build_hdr_calibration_cbuffer(
+          ::video::active_hdr_calibration.points,
+          ::video::active_hdr_calibration.enabled
+        );
+        hdr_calibration_buffer = make_dynamic_buffer(device.get(), calib_cb);
+        if (hdr_calibration_buffer) {
+          device_ctx->PSSetConstantBuffers(1, 1, &hdr_calibration_buffer);
+        }
+      }
     }
 
     int init_output(ID3D11Texture2D *frame_texture, int width, int height) {
@@ -927,10 +1006,74 @@ namespace platf::dxgi {
       return resource_view;
     }
 
+    shader_res_t create_test_pattern_texture(float nits, bool fullscreen) {
+      constexpr int width = 256;
+      constexpr int height = 256;
+
+      D3D11_TEXTURE2D_DESC texture_desc = {};
+      texture_desc.Width = width;
+      texture_desc.Height = height;
+      texture_desc.MipLevels = 1;
+      texture_desc.ArraySize = 1;
+      texture_desc.SampleDesc.Count = 1;
+      texture_desc.Usage = D3D11_USAGE_DEFAULT;
+      texture_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+      texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+      std::vector<float> mem(4 * width * height, 0.0f);
+      float val = nits / 80.0f;  // in scRGB, 1.0 = 80 nits
+
+      int min_x = fullscreen ? 0 : 87;
+      int max_x = fullscreen ? width : 168;
+      int min_y = fullscreen ? 0 : 87;
+      int max_y = fullscreen ? height : 168;
+
+      for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+          int idx = (y * width + x) * 4;
+          if (x >= min_x && x <= max_x && y >= min_y && y <= max_y) {
+            mem[idx + 0] = val;
+            mem[idx + 1] = val;
+            mem[idx + 2] = val;
+            mem[idx + 3] = 1.0f;
+          } else {
+            mem[idx + 0] = 0.0f;
+            mem[idx + 1] = 0.0f;
+            mem[idx + 2] = 0.0f;
+            mem[idx + 3] = 1.0f;
+          }
+        }
+      }
+
+      D3D11_SUBRESOURCE_DATA texture_data = {mem.data(), 4 * width * sizeof(float), 0};
+
+      texture2d_t texture;
+      auto status = device->CreateTexture2D(&texture_desc, &texture_data, &texture);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to create test pattern texture: " << util::log_hex(status);
+        return {};
+      }
+
+      shader_res_t resource_view;
+      status = device->CreateShaderResourceView(texture.get(), nullptr, &resource_view);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to create test pattern shader resource view: " << util::log_hex(status);
+        return {};
+      }
+
+      return resource_view;
+    }
+
     ::video::color_t *color_p;
 
     buf_t subsample_offset;
     buf_t color_matrix;
+    buf_t hdr_calibration_buffer;
+    uint32_t active_calibration_version = 0;
+    texture2d_t test_pattern_texture;
+    shader_res_t test_pattern_srv;
+    float current_pattern_nits = -1.0f;
+    bool current_pattern_fullscreen = false;
 
     blend_t blend_disable;
     sampler_state_t sampler_linear;

@@ -39,6 +39,7 @@
 #include "process.h"
 #include "utility.h"
 #include "uuid.h"
+#include "video_colorspace.h"
 
 #ifdef _WIN32
   #include "platform/windows/utils.h"
@@ -1078,6 +1079,161 @@ namespace confighttp {
     }
   }
 
+  void getHdrCalibration(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    nlohmann::json output_tree;
+    {
+      std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
+      output_tree["enabled"] = ::video::active_hdr_calibration.enabled;
+      output_tree["test_pattern_active"] = ::video::active_hdr_calibration.test_pattern_active;
+      output_tree["test_pattern_nits"] = ::video::active_hdr_calibration.test_pattern_nits;
+      output_tree["test_pattern_fullscreen"] = ::video::active_hdr_calibration.test_pattern_fullscreen;
+
+      auto pts = ::video::active_hdr_calibration.points.empty() ? ::video::default_hdr_calibration_points() : ::video::active_hdr_calibration.points;
+      nlohmann::json pts_json = nlohmann::json::array();
+      for (const auto &p : pts) {
+        pts_json.push_back({
+          {"nits", p.nits},
+          {"r", p.r_percent},
+          {"g", p.g_percent},
+          {"b", p.b_percent}
+        });
+      }
+      output_tree["points"] = pts_json;
+    }
+
+    send_response(response, output_tree);
+  }
+
+  void updateHdrCalibration(resp_https_t response, req_https_t request) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
+      return;
+    }
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    try {
+      auto input_tree = nlohmann::json::parse(ss);
+      {
+        std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
+        if (input_tree.contains("enabled") && input_tree["enabled"].is_boolean()) {
+          ::video::active_hdr_calibration.enabled = input_tree["enabled"].get<bool>();
+        }
+        if (input_tree.contains("test_pattern_active") && input_tree["test_pattern_active"].is_boolean()) {
+          ::video::active_hdr_calibration.test_pattern_active = input_tree["test_pattern_active"].get<bool>();
+        }
+        if (input_tree.contains("test_pattern_nits") && input_tree["test_pattern_nits"].is_number()) {
+          ::video::active_hdr_calibration.test_pattern_nits = input_tree["test_pattern_nits"].get<float>();
+        }
+        if (input_tree.contains("test_pattern_fullscreen") && input_tree["test_pattern_fullscreen"].is_boolean()) {
+          ::video::active_hdr_calibration.test_pattern_fullscreen = input_tree["test_pattern_fullscreen"].get<bool>();
+        }
+        if (input_tree.contains("points") && input_tree["points"].is_array()) {
+          std::vector<::video::hdr_calibration_point_t> new_points;
+          for (const auto &item : input_tree["points"]) {
+            ::video::hdr_calibration_point_t pt;
+            pt.nits = item.value("nits", 0.0f);
+            pt.r_percent = item.value("r", 0.0f);
+            pt.g_percent = item.value("g", 0.0f);
+            pt.b_percent = item.value("b", 0.0f);
+            new_points.push_back(pt);
+          }
+          std::sort(new_points.begin(), new_points.end(), [](const auto &a, const auto &b) {
+            return a.nits < b.nits;
+          });
+          ::video::active_hdr_calibration.points = std::move(new_points);
+        }
+        ::video::active_hdr_calibration.version++;
+      }
+
+      nlohmann::json output_tree;
+      output_tree["status"] = true;
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "UpdateHdrCalibration: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
+  void saveHdrCalibration(resp_https_t response, req_https_t request) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
+      return;
+    }
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    try {
+      auto input_tree = nlohmann::json::parse(ss);
+      std::string points_serialized;
+      bool enabled = false;
+      {
+        std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
+        if (input_tree.contains("enabled") && input_tree["enabled"].is_boolean()) {
+          ::video::active_hdr_calibration.enabled = input_tree["enabled"].get<bool>();
+        }
+        if (input_tree.contains("points") && input_tree["points"].is_array()) {
+          std::vector<::video::hdr_calibration_point_t> new_points;
+          for (const auto &item : input_tree["points"]) {
+            ::video::hdr_calibration_point_t pt;
+            pt.nits = item.value("nits", 0.0f);
+            pt.r_percent = item.value("r", 0.0f);
+            pt.g_percent = item.value("g", 0.0f);
+            pt.b_percent = item.value("b", 0.0f);
+            new_points.push_back(pt);
+          }
+          std::sort(new_points.begin(), new_points.end(), [](const auto &a, const auto &b) {
+            return a.nits < b.nits;
+          });
+          ::video::active_hdr_calibration.points = std::move(new_points);
+        }
+        enabled = ::video::active_hdr_calibration.enabled;
+        points_serialized = ::video::serialize_hdr_calibration(::video::active_hdr_calibration.points);
+        ::video::active_hdr_calibration.version++;
+      }
+
+      config::video.hdr_calibration_enabled = enabled;
+      config::video.hdr_calibration_data = points_serialized;
+
+      // Update config file
+      auto file_content = file_handler::read_file(config::sunshine.config_file.c_str());
+      std::stringstream in(file_content);
+      std::stringstream out;
+      std::string line;
+      bool wrote_enabled = false;
+      bool wrote_data = false;
+
+      while (std::getline(in, line)) {
+        if (boost::starts_with(line, "hdr_calibration_enabled")) {
+          out << "hdr_calibration_enabled = " << (enabled ? "true" : "false") << "\n";
+          wrote_enabled = true;
+        } else if (boost::starts_with(line, "hdr_calibration_data")) {
+          out << "hdr_calibration_data = " << points_serialized << "\n";
+          wrote_data = true;
+        } else {
+          out << line << "\n";
+        }
+      }
+      if (!wrote_enabled) {
+        out << "hdr_calibration_enabled = " << (enabled ? "true" : "false") << "\n";
+      }
+      if (!wrote_data) {
+        out << "hdr_calibration_data = " << points_serialized << "\n";
+      }
+
+      file_handler::write_file(config::sunshine.config_file.c_str(), out.str());
+
+      nlohmann::json output_tree;
+      output_tree["status"] = true;
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "SaveHdrCalibration: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
   /**
    * @brief Upload a cover image.
    * @param response The HTTP response object.
@@ -1543,6 +1699,9 @@ namespace confighttp {
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
     server.resource["^/api/configLocale$"]["GET"] = getLocale;
+    server.resource["^/api/hdr-calibration$"]["GET"] = getHdrCalibration;
+    server.resource["^/api/hdr-calibration$"]["POST"] = updateHdrCalibration;
+    server.resource["^/api/hdr-calibration/save$"]["POST"] = saveHdrCalibration;
     server.resource["^/api/restart$"]["POST"] = restart;
     server.resource["^/api/quit$"]["POST"] = quit;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;

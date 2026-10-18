@@ -22,6 +22,7 @@
 #include "upnp.h"
 #include "uuid.h"
 #include "video.h"
+#include "video_colorspace.h"
 
 #ifdef _WIN32
   #include "platform/windows/misc.h"
@@ -161,6 +162,13 @@ int main(int argc, char *argv[]) {
   // parse config file
   if (config::parse(argc, argv)) {
     return 0;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(video::active_hdr_calibration.mtx);
+    video::active_hdr_calibration.enabled = config::video.hdr_calibration_enabled;
+    video::active_hdr_calibration.points = video::deserialize_hdr_calibration(config::video.hdr_calibration_data);
+    video::active_hdr_calibration.version++;
   }
 
   auto log_deinit_guard = logging::init(config::sunshine.min_log_level, config::sunshine.log_file);

@@ -6,6 +6,7 @@ import AdapterNameSelector from './audiovideo/AdapterNameSelector.vue'
 import DisplayOutputSelector from './audiovideo/DisplayOutputSelector.vue'
 import DisplayDeviceOptions from "./audiovideo/DisplayDeviceOptions.vue";
 import DisplayModesSettings from "./audiovideo/DisplayModesSettings.vue";
+import HdrCalibration from "./audiovideo/HdrCalibration.vue";
 import Checkbox from "../../Checkbox.vue";
 
 const $t = inject('i18n').t;
@@ -229,6 +230,12 @@ const validateFallbackMode = (event) => {
       <input type="number" class="form-control" id="hdr_shadow_gamma" placeholder="1.25" min="0.8" max="2.5" step="0.05" v-model="config.hdr_shadow_gamma" />
       <div class="form-text">{{ $t('config.hdr_shadow_gamma_desc') }}</div>
     </div>
+
+    <!-- HDR Multi-Point Color Calibration & Test Pattern Studio -->
+    <HdrCalibration
+      :platform="platform"
+      :config="config"
+    />
 
     <!-- SudoVDA Driver Status -->
     <div class="alert" :class="[vdisplay ? 'alert-warning' : 'alert-success']" v-if="platform === 'windows'">

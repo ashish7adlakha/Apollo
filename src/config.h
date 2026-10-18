@@ -158,6 +158,8 @@ namespace config {
     float sdr_display_gamma;
     float sdr_target_gamma;
     float hdr_shadow_gamma;
+    bool hdr_calibration_enabled;
+    std::string hdr_calibration_data;
   };
 
   struct audio_t {

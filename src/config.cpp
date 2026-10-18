@@ -525,6 +525,8 @@ namespace config {
     2.2f,  // sdr_display_gamma
     2.2f,  // sdr_target_gamma
     1.25f, // hdr_shadow_gamma
+    false, // hdr_calibration_enabled
+    "",    // hdr_calibration_data
   };
 
   audio_t audio {
@@ -1238,6 +1240,8 @@ namespace config {
     float_between_f(vars, "sdr_display_gamma", video.sdr_display_gamma, {1.0f, 3.0f});
     float_between_f(vars, "sdr_target_gamma", video.sdr_target_gamma, {1.0f, 3.0f});
     float_between_f(vars, "hdr_shadow_gamma", video.hdr_shadow_gamma, {0.8f, 2.5f});
+    bool_f(vars, "hdr_calibration_enabled", video.hdr_calibration_enabled);
+    string_f(vars, "hdr_calibration_data", video.hdr_calibration_data);
 
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);
