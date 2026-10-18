@@ -27,6 +27,7 @@ extern "C" {
 #include "platform/common.h"
 #include "thread_pool.h"
 #include "utility.h"
+#include "video_colorspace.h"
 
 // Win32 WHEEL_DELTA constant
 #ifndef WHEEL_DELTA
@@ -1531,6 +1532,9 @@ namespace input {
         passthrough(input, (PNV_ABS_MOUSE_MOVE_PACKET) payload);
         break;
       case MOUSE_BUTTON_DOWN_EVENT_MAGIC_GEN5:
+        ::video::dismiss_hdr_test_pattern();
+        passthrough(input, (PNV_MOUSE_BUTTON_PACKET) payload);
+        break;
       case MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5:
         passthrough(input, (PNV_MOUSE_BUTTON_PACKET) payload);
         break;
@@ -1541,6 +1545,9 @@ namespace input {
         passthrough(input, (PSS_HSCROLL_PACKET) payload);
         break;
       case KEY_DOWN_EVENT_MAGIC:
+        ::video::dismiss_hdr_test_pattern();
+        passthrough(input, (PNV_KEYBOARD_PACKET) payload);
+        break;
       case KEY_UP_EVENT_MAGIC:
         passthrough(input, (PNV_KEYBOARD_PACKET) payload);
         break;
@@ -1551,6 +1558,7 @@ namespace input {
         passthrough(input, (PNV_MULTI_CONTROLLER_PACKET) payload);
         break;
       case SS_TOUCH_MAGIC:
+        ::video::dismiss_hdr_test_pattern();
         passthrough(input, (PSS_TOUCH_PACKET) payload);
         break;
       case SS_PEN_MAGIC:

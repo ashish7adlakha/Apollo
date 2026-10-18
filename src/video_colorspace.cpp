@@ -583,22 +583,22 @@ namespace video {
 
   std::vector<hdr_calibration_point_t> default_hdr_calibration_points() {
     return {
-      {0.0f, 0.0f, 0.0f, 0.0f},
-      {0.5f, 0.0f, 0.0f, 0.0f},
-      {1.0f, 0.0f, 0.0f, 0.0f},
-      {2.0f, 0.0f, 0.0f, 0.0f},
-      {5.0f, 0.0f, 0.0f, 0.0f},
-      {10.0f, 0.0f, 0.0f, 0.0f},
-      {25.0f, 0.0f, 0.0f, 0.0f},
-      {50.0f, 0.0f, 0.0f, 0.0f},
-      {100.0f, 0.0f, 0.0f, 0.0f},
-      {200.0f, 0.0f, 0.0f, 0.0f},
-      {400.0f, 0.0f, 0.0f, 0.0f},
-      {800.0f, 0.0f, 0.0f, 0.0f},
-      {1000.0f, 0.0f, 0.0f, 0.0f},
-      {1200.0f, 0.0f, 0.0f, 0.0f},
-      {2000.0f, 0.0f, 0.0f, 0.0f},
-      {4000.0f, 0.0f, 0.0f, 0.0f},
+      {0.0f, 1.0f, 1.0f, 1.0f},
+      {0.5f, 1.0f, 1.0f, 1.0f},
+      {1.0f, 1.0f, 1.0f, 1.0f},
+      {2.0f, 1.0f, 1.0f, 1.0f},
+      {5.0f, 1.0f, 1.0f, 1.0f},
+      {10.0f, 1.0f, 1.0f, 1.0f},
+      {25.0f, 1.0f, 1.0f, 1.0f},
+      {50.0f, 1.0f, 1.0f, 1.0f},
+      {100.0f, 1.0f, 1.0f, 1.0f},
+      {200.0f, 1.0f, 1.0f, 1.0f},
+      {400.0f, 1.0f, 1.0f, 1.0f},
+      {800.0f, 1.0f, 1.0f, 1.0f},
+      {1000.0f, 1.0f, 1.0f, 1.0f},
+      {1200.0f, 1.0f, 1.0f, 1.0f},
+      {2000.0f, 1.0f, 1.0f, 1.0f},
+      {4000.0f, 1.0f, 1.0f, 1.0f},
     };
   }
 
@@ -615,9 +615,9 @@ namespace video {
 
     for (size_t i = 0; i < count; ++i) {
       cb.points[i][0] = nits_to_pq(pts[i].nits);
-      cb.points[i][1] = pts[i].r_percent / 100.0f;
-      cb.points[i][2] = pts[i].g_percent / 100.0f;
-      cb.points[i][3] = pts[i].b_percent / 100.0f;
+      cb.points[i][1] = pts[i].r_mult;
+      cb.points[i][2] = pts[i].g_mult;
+      cb.points[i][3] = pts[i].b_mult;
     }
     return cb;
   }
@@ -627,9 +627,9 @@ namespace video {
     for (const auto &p : points) {
       j.push_back({
         {"nits", p.nits},
-        {"r", p.r_percent},
-        {"g", p.g_percent},
-        {"b", p.b_percent}
+        {"r", p.r_mult},
+        {"g", p.g_mult},
+        {"b", p.b_mult}
       });
     }
     return j.dump();
@@ -648,9 +648,35 @@ namespace video {
       for (const auto &item : j) {
         hdr_calibration_point_t pt;
         pt.nits = item.value("nits", 0.0f);
-        pt.r_percent = item.value("r", 0.0f);
-        pt.g_percent = item.value("g", 0.0f);
-        pt.b_percent = item.value("b", 0.0f);
+        if (item.contains("r")) {
+          pt.r_mult = item["r"].get<float>();
+        } else if (item.contains("r_mult")) {
+          pt.r_mult = item["r_mult"].get<float>();
+        } else if (item.contains("r_percent")) {
+          pt.r_mult = 1.0f + item["r_percent"].get<float>() / 100.0f;
+        } else {
+          pt.r_mult = 1.0f;
+        }
+
+        if (item.contains("g")) {
+          pt.g_mult = item["g"].get<float>();
+        } else if (item.contains("g_mult")) {
+          pt.g_mult = item["g_mult"].get<float>();
+        } else if (item.contains("g_percent")) {
+          pt.g_mult = 1.0f + item["g_percent"].get<float>() / 100.0f;
+        } else {
+          pt.g_mult = 1.0f;
+        }
+
+        if (item.contains("b")) {
+          pt.b_mult = item["b"].get<float>();
+        } else if (item.contains("b_mult")) {
+          pt.b_mult = item["b_mult"].get<float>();
+        } else if (item.contains("b_percent")) {
+          pt.b_mult = 1.0f + item["b_percent"].get<float>() / 100.0f;
+        } else {
+          pt.b_mult = 1.0f;
+        }
         result.push_back(pt);
       }
       std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
@@ -663,4 +689,17 @@ namespace video {
   }
 
   active_calibration_t active_hdr_calibration;
+
+  void dismiss_hdr_test_pattern() {
+    if (active_hdr_calibration.test_pattern_active) {
+      std::lock_guard<std::mutex> lock(active_hdr_calibration.mtx);
+      if (active_hdr_calibration.test_pattern_active) {
+        auto now = std::chrono::steady_clock::now();
+        // 400ms grace period to avoid instant dismissal from the activation click
+        if (now - active_hdr_calibration.test_pattern_activated_at >= std::chrono::milliseconds(400)) {
+          active_hdr_calibration.test_pattern_active = false;
+        }
+      }
+    }
+  }
 }  // namespace video

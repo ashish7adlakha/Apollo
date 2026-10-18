@@ -1097,9 +1097,9 @@ namespace confighttp {
       for (const auto &p : pts) {
         pts_json.push_back({
           {"nits", p.nits},
-          {"r", p.r_percent},
-          {"g", p.g_percent},
-          {"b", p.b_percent}
+          {"r", p.r_mult},
+          {"g", p.g_mult},
+          {"b", p.b_mult}
         });
       }
       output_tree["points"] = pts_json;
@@ -1123,7 +1123,11 @@ namespace confighttp {
           ::video::active_hdr_calibration.enabled = input_tree["enabled"].get<bool>();
         }
         if (input_tree.contains("test_pattern_active") && input_tree["test_pattern_active"].is_boolean()) {
-          ::video::active_hdr_calibration.test_pattern_active = input_tree["test_pattern_active"].get<bool>();
+          bool active = input_tree["test_pattern_active"].get<bool>();
+          if (active && !::video::active_hdr_calibration.test_pattern_active) {
+            ::video::active_hdr_calibration.test_pattern_activated_at = std::chrono::steady_clock::now();
+          }
+          ::video::active_hdr_calibration.test_pattern_active = active;
         }
         if (input_tree.contains("test_pattern_nits") && input_tree["test_pattern_nits"].is_number()) {
           ::video::active_hdr_calibration.test_pattern_nits = input_tree["test_pattern_nits"].get<float>();
@@ -1136,9 +1140,35 @@ namespace confighttp {
           for (const auto &item : input_tree["points"]) {
             ::video::hdr_calibration_point_t pt;
             pt.nits = item.value("nits", 0.0f);
-            pt.r_percent = item.value("r", 0.0f);
-            pt.g_percent = item.value("g", 0.0f);
-            pt.b_percent = item.value("b", 0.0f);
+            if (item.contains("r")) {
+              pt.r_mult = item["r"].get<float>();
+            } else if (item.contains("r_mult")) {
+              pt.r_mult = item["r_mult"].get<float>();
+            } else if (item.contains("r_percent")) {
+              pt.r_mult = 1.0f + item["r_percent"].get<float>() / 100.0f;
+            } else {
+              pt.r_mult = 1.0f;
+            }
+
+            if (item.contains("g")) {
+              pt.g_mult = item["g"].get<float>();
+            } else if (item.contains("g_mult")) {
+              pt.g_mult = item["g_mult"].get<float>();
+            } else if (item.contains("g_percent")) {
+              pt.g_mult = 1.0f + item["g_percent"].get<float>() / 100.0f;
+            } else {
+              pt.g_mult = 1.0f;
+            }
+
+            if (item.contains("b")) {
+              pt.b_mult = item["b"].get<float>();
+            } else if (item.contains("b_mult")) {
+              pt.b_mult = item["b_mult"].get<float>();
+            } else if (item.contains("b_percent")) {
+              pt.b_mult = 1.0f + item["b_percent"].get<float>() / 100.0f;
+            } else {
+              pt.b_mult = 1.0f;
+            }
             new_points.push_back(pt);
           }
           std::sort(new_points.begin(), new_points.end(), [](const auto &a, const auto &b) {
@@ -1179,9 +1209,35 @@ namespace confighttp {
           for (const auto &item : input_tree["points"]) {
             ::video::hdr_calibration_point_t pt;
             pt.nits = item.value("nits", 0.0f);
-            pt.r_percent = item.value("r", 0.0f);
-            pt.g_percent = item.value("g", 0.0f);
-            pt.b_percent = item.value("b", 0.0f);
+            if (item.contains("r")) {
+              pt.r_mult = item["r"].get<float>();
+            } else if (item.contains("r_mult")) {
+              pt.r_mult = item["r_mult"].get<float>();
+            } else if (item.contains("r_percent")) {
+              pt.r_mult = 1.0f + item["r_percent"].get<float>() / 100.0f;
+            } else {
+              pt.r_mult = 1.0f;
+            }
+
+            if (item.contains("g")) {
+              pt.g_mult = item["g"].get<float>();
+            } else if (item.contains("g_mult")) {
+              pt.g_mult = item["g_mult"].get<float>();
+            } else if (item.contains("g_percent")) {
+              pt.g_mult = 1.0f + item["g_percent"].get<float>() / 100.0f;
+            } else {
+              pt.g_mult = 1.0f;
+            }
+
+            if (item.contains("b")) {
+              pt.b_mult = item["b"].get<float>();
+            } else if (item.contains("b_mult")) {
+              pt.b_mult = item["b_mult"].get<float>();
+            } else if (item.contains("b_percent")) {
+              pt.b_mult = 1.0f + item["b_percent"].get<float>() / 100.0f;
+            } else {
+              pt.b_mult = 1.0f;
+            }
             new_points.push_back(pt);
           }
           std::sort(new_points.begin(), new_points.end(), [](const auto &a, const auto &b) {

@@ -29,9 +29,9 @@ float3 Rec709toRec2020(float3 rec709)
 }
 
 #if defined(PERCEPTUAL_QUANTIZER)
-cbuffer hdr_calibration_cbuffer : register(b1) {
+cbuffer hdr_calibration_cbuffer : register(b2) {
     float4 hdr_calib_flags;       // x: enabled (1.0/0.0), y: count (up to 16), z: 0, w: 0
-    float4 hdr_calib_points[16];  // each is {pq, delta_r, delta_g, delta_b}
+    float4 hdr_calib_points[16];  // each is {pq, mult_r, mult_g, mult_b}
 };
 
 float3 ApplyHDRCalibration(float3 nits)
@@ -48,26 +48,26 @@ float3 ApplyHDRCalibration(float3 nits)
         float P = pow((c1 + c2 * Lp) / (1.0f + c3 * Lp), m2);
 
         int num_pts = int(hdr_calib_flags.y);
-        float3 delta = float3(0.0f, 0.0f, 0.0f);
+        float3 mult = float3(1.0f, 1.0f, 1.0f);
 
         if (num_pts > 0) {
             if (P <= hdr_calib_points[0].x) {
-                delta = hdr_calib_points[0].yzw;
+                mult = hdr_calib_points[0].yzw;
             } else if (P >= hdr_calib_points[num_pts - 1].x) {
-                delta = hdr_calib_points[num_pts - 1].yzw;
+                mult = hdr_calib_points[num_pts - 1].yzw;
             } else {
                 [unroll]
                 for (int i = 0; i < 15; i++) {
                     if (i < num_pts - 1 && P >= hdr_calib_points[i].x && P < hdr_calib_points[i + 1].x) {
                         float span = hdr_calib_points[i + 1].x - hdr_calib_points[i].x;
-                        float t = (span > 0.0001f) ? ((P - hdr_calib_points[i].x) / span) : 0.0f;
-                        delta = lerp(hdr_calib_points[i].yzw, hdr_calib_points[i + 1].yzw, t);
+                        float t = (span > 0.0001f) ? saturate((P - hdr_calib_points[i].x) / span) : 0.0f;
+                        mult = lerp(hdr_calib_points[i].yzw, hdr_calib_points[i + 1].yzw, t);
                         break;
                     }
                 }
             }
         }
-        nits = max(0.0f, nits * (1.0f + delta));
+        nits = max(0.0f, nits * mult);
     }
     return nits;
 }

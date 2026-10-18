@@ -460,7 +460,7 @@ namespace platf::dxgi {
         };
 
         if (display && display->is_hdr()) {
-          if (::video::active_hdr_calibration.version != active_calibration_version) {
+          if (!hdr_calibration_buffer || ::video::active_hdr_calibration.version != active_calibration_version) {
             std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
             active_calibration_version = ::video::active_hdr_calibration.version;
             auto calib_cb = ::video::build_hdr_calibration_cbuffer(
@@ -469,13 +469,12 @@ namespace platf::dxgi {
             );
             if (!hdr_calibration_buffer) {
               hdr_calibration_buffer = make_dynamic_buffer(device.get(), calib_cb);
-              if (hdr_calibration_buffer) {
-                device_ctx->PSSetConstantBuffers(1, 1, &hdr_calibration_buffer);
-              }
             } else {
               device_ctx->UpdateSubresource(hdr_calibration_buffer.get(), 0, nullptr, &calib_cb, 0, 0);
-              device_ctx->PSSetConstantBuffers(1, 1, &hdr_calibration_buffer);
             }
+          }
+          if (hdr_calibration_buffer) {
+            device_ctx->PSSetConstantBuffers(2, 1, &hdr_calibration_buffer);
           }
         }
 
@@ -483,13 +482,37 @@ namespace platf::dxgi {
         if (display && display->is_hdr()) {
           std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
           if (::video::active_hdr_calibration.test_pattern_active) {
-            is_test_pattern = true;
-            if (!test_pattern_srv ||
-                current_pattern_nits != ::video::active_hdr_calibration.test_pattern_nits ||
-                current_pattern_fullscreen != ::video::active_hdr_calibration.test_pattern_fullscreen) {
-              current_pattern_nits = ::video::active_hdr_calibration.test_pattern_nits;
-              current_pattern_fullscreen = ::video::active_hdr_calibration.test_pattern_fullscreen;
-              test_pattern_srv = create_test_pattern_texture(current_pattern_nits, current_pattern_fullscreen);
+            auto now = std::chrono::steady_clock::now();
+            if (now - ::video::active_hdr_calibration.test_pattern_activated_at >= std::chrono::milliseconds(400)) {
+              bool host_input = false;
+              if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
+                  (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ||
+                  (GetAsyncKeyState(VK_MBUTTON) & 0x8000) ||
+                  (GetAsyncKeyState(VK_XBUTTON1) & 0x8000) ||
+                  (GetAsyncKeyState(VK_XBUTTON2) & 0x8000)) {
+                host_input = true;
+              } else {
+                for (int vk = 0x08; vk <= 0xFE; ++vk) {
+                  if (GetAsyncKeyState(vk) & 0x8000) {
+                    host_input = true;
+                    break;
+                  }
+                }
+              }
+              if (host_input) {
+                ::video::active_hdr_calibration.test_pattern_active = false;
+              }
+            }
+
+            if (::video::active_hdr_calibration.test_pattern_active) {
+              is_test_pattern = true;
+              if (!test_pattern_srv ||
+                  current_pattern_nits != ::video::active_hdr_calibration.test_pattern_nits ||
+                  current_pattern_fullscreen != ::video::active_hdr_calibration.test_pattern_fullscreen) {
+                current_pattern_nits = ::video::active_hdr_calibration.test_pattern_nits;
+                current_pattern_fullscreen = ::video::active_hdr_calibration.test_pattern_fullscreen;
+                test_pattern_srv = create_test_pattern_texture(current_pattern_nits, current_pattern_fullscreen);
+              }
             }
           }
         }
@@ -553,7 +576,7 @@ namespace platf::dxgi {
         );
         hdr_calibration_buffer = make_dynamic_buffer(device.get(), calib_cb);
         if (hdr_calibration_buffer) {
-          device_ctx->PSSetConstantBuffers(1, 1, &hdr_calibration_buffer);
+          device_ctx->PSSetConstantBuffers(2, 1, &hdr_calibration_buffer);
         }
       }
     }
@@ -1067,7 +1090,7 @@ namespace platf::dxgi {
     buf_t subsample_offset;
     buf_t color_matrix;
     buf_t hdr_calibration_buffer;
-    uint32_t active_calibration_version = 0;
+    uint32_t active_calibration_version = (uint32_t)-1;
     shader_res_t test_pattern_srv;
     float current_pattern_nits = -1.0f;
     bool current_pattern_fullscreen = false;

@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -77,14 +78,14 @@ namespace video {
 
   struct hdr_calibration_point_t {
     float nits = 0.0f;
-    float r_percent = 0.0f;  ///< Red adjustment percentage (-25.0% to +25.0%)
-    float g_percent = 0.0f;  ///< Green adjustment percentage (-25.0% to +25.0%)
-    float b_percent = 0.0f;  ///< Blue adjustment percentage (-25.0% to +25.0%)
+    float r_mult = 1.0f;  ///< Red multiplier (1.0 = neutral)
+    float g_mult = 1.0f;  ///< Green multiplier (1.0 = neutral)
+    float b_mult = 1.0f;  ///< Blue multiplier (1.0 = neutral)
   };
 
   struct alignas(16) hdr_calibration_cbuffer_t {
     float flags[4];       ///< x: enabled (1.0 or 0.0), y: count (up to 16), z: 0, w: 0
-    float points[16][4];  ///< each is {pq, delta_r, delta_g, delta_b} where delta is fraction
+    float points[16][4];  ///< each is {pq, r_mult, g_mult, b_mult}
   };
 
   float nits_to_pq(float nits);
@@ -100,8 +101,11 @@ namespace video {
     bool test_pattern_active = false;
     float test_pattern_nits = 10.0f;
     bool test_pattern_fullscreen = false;
+    std::chrono::steady_clock::time_point test_pattern_activated_at;
     uint32_t version = 0;
   };
 
   extern active_calibration_t active_hdr_calibration;
+
+  void dismiss_hdr_test_pattern();
 }  // namespace video
