@@ -527,6 +527,10 @@ namespace config {
     1.25f, // hdr_shadow_gamma
     false, // hdr_calibration_enabled
     "",    // hdr_calibration_data
+    10000.0f, // hdr_shadow_knee
+    1.0f,  // hdr_shadow_slope
+    false, // hdr_eotf_enabled
+    "",    // hdr_eotf_data
   };
 
   audio_t audio {
@@ -1242,6 +1246,10 @@ namespace config {
     float_between_f(vars, "hdr_shadow_gamma", video.hdr_shadow_gamma, {0.8f, 2.5f});
     bool_f(vars, "hdr_calibration_enabled", video.hdr_calibration_enabled);
     string_f(vars, "hdr_calibration_data", video.hdr_calibration_data);
+    float_between_f(vars, "hdr_shadow_knee", video.hdr_shadow_knee, {1.0f, 10000.0f});
+    float_between_f(vars, "hdr_shadow_slope", video.hdr_shadow_slope, {0.25f, 4.0f});
+    bool_f(vars, "hdr_eotf_enabled", video.hdr_eotf_enabled);
+    string_f(vars, "hdr_eotf_data", video.hdr_eotf_data);
 
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);

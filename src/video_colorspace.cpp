@@ -84,10 +84,6 @@ namespace video {
         BOOST_LOG(info) << "HDR Color Range: HDMI Legal Range Remapping enabled (anti-clipping)";
         colorspace.full_range = false;
         colorspace.legal_remap = true;
-        if (config::video.hdr_shadow_gamma > 0.1f) {
-          colorspace.hdr_shadow_gamma = config::video.hdr_shadow_gamma;
-          BOOST_LOG(info) << "HDR Shadow Curve Gamma: " << colorspace.hdr_shadow_gamma;
-        }
       } else {
         // "auto" or legacy fallback
         if (config::video.hdr_limited_range) {
@@ -99,6 +95,17 @@ namespace video {
       }
       if (colorspace.black_lift != 0) {
         BOOST_LOG(info) << "HDR Black Level Lift: " << (colorspace.black_lift > 0 ? "+" : "") << colorspace.black_lift;
+      }
+      {
+        // The shadow curve is applied in the light (nits) domain by the HDR pixel shaders,
+        // so it works in every HDR color range mode. It is carried by the calibration cbuffer.
+        std::lock_guard<std::mutex> lock(active_hdr_calibration.mtx);
+        if (std::abs(active_hdr_calibration.shadow_gamma - 1.0f) > 0.0005f ||
+            std::abs(active_hdr_calibration.shadow_slope - 1.0f) > 0.0005f) {
+          BOOST_LOG(info) << "HDR Shadow Curve: gamma " << active_hdr_calibration.shadow_gamma
+                          << ", slope " << active_hdr_calibration.shadow_slope
+                          << " (below " << active_hdr_calibration.shadow_knee_nits << " nits)";
+        }
       }
     } else {
       if (config::video.sdr_color_range == "limited"sv) {
@@ -202,7 +209,7 @@ namespace video {
   }
 
   const color_t *color_vectors_from_colorspace(const sunshine_colorspace_t &colorspace) {
-    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f || colorspace.hdr_shadow_gamma != 1.0f) {
+    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f) {
       using float2 = float[2];
       // sRGB to Display P3 (D65) transformation matrix coefficients.
       // Applied when colorspace is display_p3 to preserve the sRGB-clamp behavior
@@ -252,7 +259,7 @@ namespace video {
           {v0, v1, v2, 0.5f},
           {scale_y, shift_y},
           {scale_uv, shift_uv},
-          {colorspace.sdr_gamma_power, colorspace.hdr_shadow_gamma, 0.0f, 0.0f},
+          {colorspace.sdr_gamma_power, 1.0f, 0.0f, 0.0f},
         };
       };
 
@@ -509,14 +516,14 @@ namespace video {
       color_vectors.range_uv[0] = 1;
       color_vectors.range_uv[1] = 0;
       color_vectors.gamma_params[0] = colorspace.sdr_gamma_power;
-      color_vectors.gamma_params[1] = colorspace.hdr_shadow_gamma;
+      color_vectors.gamma_params[1] = 1.0f;
       color_vectors.gamma_params[2] = 0.0f;
       color_vectors.gamma_params[3] = 0.0f;
 
       return color_vectors;
     };
 
-    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f || colorspace.hdr_shadow_gamma != 1.0f) {
+    if (colorspace.legal_remap || colorspace.black_lift != 0 || colorspace.sdr_gamma_power != 1.0f) {
       static thread_local color_t custom_color;
       custom_color = generate_color_vectors(colorspace);
       return &custom_color;
@@ -602,16 +609,24 @@ namespace video {
     };
   }
 
-  hdr_calibration_cbuffer_t build_hdr_calibration_cbuffer(const std::vector<hdr_calibration_point_t> &points, bool enabled) {
+  hdr_calibration_cbuffer_t build_hdr_calibration_cbuffer(const active_calibration_t &state) {
     hdr_calibration_cbuffer_t cb {};
-    auto pts = points.empty() ? default_hdr_calibration_points() : points;
+    auto pts = state.points.empty() ? default_hdr_calibration_points() : state.points;
     std::sort(pts.begin(), pts.end(), [](const auto &a, const auto &b) {
       return a.nits < b.nits;
     });
 
     size_t count = std::min<size_t>(pts.size(), 16);
-    cb.flags[0] = enabled ? 1.0f : 0.0f;
+    cb.flags[0] = state.enabled ? 1.0f : 0.0f;
     cb.flags[1] = static_cast<float>(count);
+
+    // Shadow curve: gamma applied to the PQ signal below the knee (1.0 = off)
+    float shadow_gamma = state.shadow_gamma;
+    if (!(shadow_gamma >= 0.5f && shadow_gamma <= 3.0f)) {
+      shadow_gamma = 1.0f;
+    }
+    cb.flags[2] = shadow_gamma;
+    cb.flags[3] = nits_to_pq(std::clamp(state.shadow_knee_nits, 1.0f, 10000.0f));
 
     for (size_t i = 0; i < count; ++i) {
       cb.points[i][0] = nits_to_pq(pts[i].nits);
@@ -619,7 +634,74 @@ namespace video {
       cb.points[i][2] = pts[i].g_mult;
       cb.points[i][3] = pts[i].b_mult;
     }
+
+    // EOTF gain points: one brightness multiplier per luminance level
+    auto eotf = state.eotf_points;
+    std::sort(eotf.begin(), eotf.end(), [](const auto &a, const auto &b) {
+      return a.nits < b.nits;
+    });
+    size_t eotf_count = std::min<size_t>(eotf.size(), 16);
+    cb.eotf_flags[0] = (state.eotf_enabled && eotf_count > 0) ? 1.0f : 0.0f;
+    cb.eotf_flags[1] = static_cast<float>(eotf_count);
+
+    // Shadow slope: power applied to luminance (nits) below the knee (1.0 = off)
+    float shadow_slope = state.shadow_slope;
+    if (!(shadow_slope >= 0.25f && shadow_slope <= 4.0f)) {
+      shadow_slope = 1.0f;
+    }
+    cb.eotf_flags[2] = shadow_slope;
+    for (size_t i = 0; i < eotf_count; ++i) {
+      cb.eotf_points[i][0] = nits_to_pq(eotf[i].nits);
+      cb.eotf_points[i][1] = std::clamp(eotf[i].gain, 1.0f / 1024.0f, 1024.0f);
+    }
     return cb;
+  }
+
+  std::string serialize_eotf_points(const std::vector<eotf_point_t> &points) {
+    nlohmann::json j = nlohmann::json::array();
+    for (const auto &p : points) {
+      j.push_back({
+        {"nits", p.nits},
+        {"gain", p.gain}
+      });
+    }
+    return j.dump();
+  }
+
+  std::vector<eotf_point_t> eotf_points_from_json(const nlohmann::json &j) {
+    std::vector<eotf_point_t> result;
+    if (!j.is_array()) {
+      return result;
+    }
+    for (const auto &item : j) {
+      if (!item.is_object()) {
+        continue;
+      }
+      eotf_point_t pt;
+      pt.nits = item.value("nits", 0.0f);
+      pt.gain = item.value("gain", 1.0f);
+      if (pt.nits > 0.0f && pt.gain > 0.0f) {
+        result.push_back(pt);
+      }
+    }
+    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
+      return a.nits < b.nits;
+    });
+    if (result.size() > 16) {
+      result.resize(16);
+    }
+    return result;
+  }
+
+  std::vector<eotf_point_t> deserialize_eotf_points(const std::string &json_str) {
+    if (json_str.empty()) {
+      return {};
+    }
+    try {
+      return eotf_points_from_json(nlohmann::json::parse(json_str));
+    } catch (...) {
+      return {};
+    }
   }
 
   std::string serialize_hdr_calibration(const std::vector<hdr_calibration_point_t> &points) {
@@ -690,9 +772,13 @@ namespace video {
 
   active_calibration_t active_hdr_calibration;
 
-  void dismiss_hdr_test_pattern() {
+  void dismiss_hdr_test_pattern(bool is_escape) {
     if (active_hdr_calibration.test_pattern_active) {
       std::lock_guard<std::mutex> lock(active_hdr_calibration.mtx);
+      // The EOTF chart stays up while the user works in the web UI: only Esc hides it
+      if (active_hdr_calibration.test_pattern_type == test_pattern_e::eotf_chart && !is_escape) {
+        return;
+      }
       if (active_hdr_calibration.test_pattern_active) {
         auto now = std::chrono::steady_clock::now();
         // 400ms grace period to avoid instant dismissal from the activation click

@@ -168,6 +168,11 @@ int main(int argc, char *argv[]) {
     std::lock_guard<std::mutex> lock(video::active_hdr_calibration.mtx);
     video::active_hdr_calibration.enabled = config::video.hdr_calibration_enabled;
     video::active_hdr_calibration.points = video::deserialize_hdr_calibration(config::video.hdr_calibration_data);
+    video::active_hdr_calibration.eotf_enabled = config::video.hdr_eotf_enabled;
+    video::active_hdr_calibration.eotf_points = video::deserialize_eotf_points(config::video.hdr_eotf_data);
+    video::active_hdr_calibration.shadow_gamma = config::video.hdr_shadow_gamma;
+    video::active_hdr_calibration.shadow_knee_nits = config::video.hdr_shadow_knee;
+    video::active_hdr_calibration.shadow_slope = config::video.hdr_shadow_slope;
     video::active_hdr_calibration.version++;
   }
 

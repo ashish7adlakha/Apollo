@@ -160,6 +160,10 @@ namespace config {
     float hdr_shadow_gamma;
     bool hdr_calibration_enabled;
     std::string hdr_calibration_data;
+    float hdr_shadow_knee;
+    float hdr_shadow_slope;
+    bool hdr_eotf_enabled;
+    std::string hdr_eotf_data;
   };
 
   struct audio_t {

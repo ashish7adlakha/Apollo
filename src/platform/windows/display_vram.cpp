@@ -4,6 +4,7 @@
  */
 // standard includes
 #include <cmath>
+#include <cstring>
 
 // platform includes
 #include <d3dcompiler.h>
@@ -28,6 +29,7 @@ extern "C" {
 #include "src/nvenc/nvenc_d3d11_on_cuda.h"
 #include "src/nvenc/nvenc_utils.h"
 #include "src/video.h"
+#include "src/eotf_chart.h"
 #include "src/video_colorspace.h"
 
 #if !defined(SUNSHINE_SHADERS_DIR)  // for testing this needs to be defined in cmake as we don't do an install
@@ -463,10 +465,7 @@ namespace platf::dxgi {
           if (!hdr_calibration_buffer || ::video::active_hdr_calibration.version != active_calibration_version) {
             std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
             active_calibration_version = ::video::active_hdr_calibration.version;
-            auto calib_cb = ::video::build_hdr_calibration_cbuffer(
-              ::video::active_hdr_calibration.points,
-              ::video::active_hdr_calibration.enabled
-            );
+            auto calib_cb = ::video::build_hdr_calibration_cbuffer(::video::active_hdr_calibration);
             if (!hdr_calibration_buffer) {
               hdr_calibration_buffer = make_dynamic_buffer(device.get(), calib_cb);
             } else {
@@ -483,9 +482,13 @@ namespace platf::dxgi {
           std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
           if (::video::active_hdr_calibration.test_pattern_active) {
             auto now = std::chrono::steady_clock::now();
+            const bool is_chart = ::video::active_hdr_calibration.test_pattern_type == ::video::test_pattern_e::eotf_chart;
             if (now - ::video::active_hdr_calibration.test_pattern_activated_at >= std::chrono::milliseconds(400)) {
               bool host_input = false;
-              if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
+              if (is_chart) {
+                // The EOTF chart stays up while the user works in the web UI: only Esc hides it
+                host_input = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+              } else if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
                   (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ||
                   (GetAsyncKeyState(VK_MBUTTON) & 0x8000) ||
                   (GetAsyncKeyState(VK_XBUTTON1) & 0x8000) ||
@@ -506,9 +509,29 @@ namespace platf::dxgi {
 
             if (::video::active_hdr_calibration.test_pattern_active) {
               is_test_pattern = true;
-              if (!test_pattern_srv ||
-                  current_pattern_nits != ::video::active_hdr_calibration.test_pattern_nits ||
-                  current_pattern_fullscreen != ::video::active_hdr_calibration.test_pattern_fullscreen) {
+              if (is_chart) {
+                ::video::eotf_chart::params_t chart_params;
+                chart_params.peak_nits = ::video::active_hdr_calibration.chart_peak_nits;
+                chart_params.line_px = ::video::active_hdr_calibration.chart_line_px;
+                chart_params.end_strips = ::video::active_hdr_calibration.chart_end_strips;
+                chart_params.range_stops = ::video::active_hdr_calibration.chart_range_stops;
+                chart_params.bands = ::video::active_hdr_calibration.chart_bands;
+                if (!test_pattern_srv ||
+                    !current_pattern_is_chart ||
+                    current_chart_params.bands != chart_params.bands ||
+                    current_chart_params.range_stops != chart_params.range_stops ||
+                    current_chart_params.peak_nits != chart_params.peak_nits ||
+                    current_chart_params.line_px != chart_params.line_px ||
+                    current_chart_params.end_strips != chart_params.end_strips) {
+                  current_pattern_is_chart = true;
+                  current_chart_params = chart_params;
+                  test_pattern_srv = create_eotf_chart_texture(chart_params);
+                }
+              } else if (!test_pattern_srv ||
+                         current_pattern_is_chart ||
+                         current_pattern_nits != ::video::active_hdr_calibration.test_pattern_nits ||
+                         current_pattern_fullscreen != ::video::active_hdr_calibration.test_pattern_fullscreen) {
+                current_pattern_is_chart = false;
                 current_pattern_nits = ::video::active_hdr_calibration.test_pattern_nits;
                 current_pattern_fullscreen = ::video::active_hdr_calibration.test_pattern_fullscreen;
                 test_pattern_srv = create_test_pattern_texture(current_pattern_nits, current_pattern_fullscreen);
@@ -570,10 +593,7 @@ namespace platf::dxgi {
       if (display && display->is_hdr()) {
         std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
         active_calibration_version = ::video::active_hdr_calibration.version;
-        auto calib_cb = ::video::build_hdr_calibration_cbuffer(
-          ::video::active_hdr_calibration.points,
-          ::video::active_hdr_calibration.enabled
-        );
+        auto calib_cb = ::video::build_hdr_calibration_cbuffer(::video::active_hdr_calibration);
         hdr_calibration_buffer = make_dynamic_buffer(device.get(), calib_cb);
         if (hdr_calibration_buffer) {
           device_ctx->PSSetConstantBuffers(2, 1, &hdr_calibration_buffer);
@@ -1085,6 +1105,88 @@ namespace platf::dxgi {
       return resource_view;
     }
 
+    /**
+     * @brief Create the EOTF null chart as an scRGB texture.
+     * The texture has the exact size of the output viewport so that every texel lands on
+     * one encoded pixel. Any scaling would average the reference lines in the wrong domain.
+     */
+    shader_res_t create_eotf_chart_texture(const ::video::eotf_chart::params_t &params) {
+      const int width = std::max(1, (int) std::lround(out_Y_or_YUV_viewports[0].Width));
+      const int height = std::max(1, (int) std::lround(out_Y_or_YUV_viewports[0].Height));
+
+      const auto nits = ::video::eotf_chart::render(width, height, params);
+
+      // IEEE 754 float -> half, round to nearest. Handles subnormals (near-black steps).
+      const auto to_half = [](float value) -> uint16_t {
+        uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        const uint32_t sign = (bits >> 16) & 0x8000u;
+        const int32_t exponent = (int32_t) ((bits >> 23) & 0xFFu) - 127 + 15;
+        uint32_t mantissa = bits & 0x7FFFFFu;
+
+        if (exponent >= 31) {
+          return (uint16_t) (sign | 0x7BFFu);  // clamp to the largest finite half
+        }
+        if (exponent <= 0) {
+          if (exponent < -10) {
+            return (uint16_t) sign;  // too small, becomes zero
+          }
+          mantissa |= 0x800000u;
+          const uint32_t shift = (uint32_t) (14 - exponent);
+          uint32_t half_mantissa = mantissa >> shift;
+          if ((mantissa >> (shift - 1)) & 1u) {
+            half_mantissa += 1;
+          }
+          return (uint16_t) (sign | half_mantissa);
+        }
+        uint32_t half = sign | ((uint32_t) exponent << 10) | (mantissa >> 13);
+        if (mantissa & 0x1000u) {
+          half += 1;  // may carry into the exponent, which is the correct rounding
+        }
+        return (uint16_t) half;
+      };
+
+      const uint16_t half_one = to_half(1.0f);
+      std::vector<uint16_t> mem((size_t) 4 * width * height);
+      for (size_t i = 0; i < nits.size(); ++i) {
+        const uint16_t v = to_half(nits[i] / 80.0f);  // in scRGB, 1.0 = 80 nits
+        mem[i * 4 + 0] = v;
+        mem[i * 4 + 1] = v;
+        mem[i * 4 + 2] = v;
+        mem[i * 4 + 3] = half_one;
+      }
+
+      D3D11_TEXTURE2D_DESC texture_desc = {};
+      texture_desc.Width = width;
+      texture_desc.Height = height;
+      texture_desc.MipLevels = 1;
+      texture_desc.ArraySize = 1;
+      texture_desc.SampleDesc.Count = 1;
+      texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
+      texture_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+      texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+      D3D11_SUBRESOURCE_DATA texture_data = {mem.data(), (UINT) (4 * width * sizeof(uint16_t)), 0};
+
+      texture2d_t texture;
+      auto status = device->CreateTexture2D(&texture_desc, &texture_data, &texture);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to create EOTF chart texture: " << util::log_hex(status);
+        return {};
+      }
+
+      shader_res_t resource_view;
+      status = device->CreateShaderResourceView(texture.get(), nullptr, &resource_view);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to create EOTF chart shader resource view: " << util::log_hex(status);
+        return {};
+      }
+
+      BOOST_LOG(info) << "EOTF chart created: " << width << 'x' << height << ", peak " << params.peak_nits << " nits, " << params.line_px << " px lines";
+
+      return resource_view;
+    }
+
     ::video::color_t *color_p;
 
     buf_t subsample_offset;
@@ -1094,6 +1196,8 @@ namespace platf::dxgi {
     shader_res_t test_pattern_srv;
     float current_pattern_nits = -1.0f;
     bool current_pattern_fullscreen = false;
+    bool current_pattern_is_chart = false;
+    ::video::eotf_chart::params_t current_chart_params;
 
     blend_t blend_disable;
     sampler_state_t sampler_linear;

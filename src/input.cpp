@@ -1545,7 +1545,8 @@ namespace input {
         passthrough(input, (PSS_HSCROLL_PACKET) payload);
         break;
       case KEY_DOWN_EVENT_MAGIC:
-        ::video::dismiss_hdr_test_pattern();
+        // 0x1B = VK_ESCAPE (the EOTF chart only hides on Esc)
+        ::video::dismiss_hdr_test_pattern((((PNV_KEYBOARD_PACKET) payload)->keyCode & 0x00FF) == 0x1B);
         passthrough(input, (PNV_KEYBOARD_PACKET) payload);
         break;
       case KEY_UP_EVENT_MAGIC:

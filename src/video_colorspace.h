@@ -4,8 +4,11 @@
  */
 #pragma once
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <mutex>
+#include <nlohmann/json_fwd.hpp>
 #include <string>
 #include <vector>
 
@@ -30,7 +33,6 @@ namespace video {
     bool legal_remap = false;
     int black_lift = 0;
     float sdr_gamma_power = 1.0f;
-    float hdr_shadow_gamma = 1.0f;
   };
 
   bool colorspace_is_hdr(const sunshine_colorspace_t &colorspace);
@@ -83,29 +85,73 @@ namespace video {
     float b_mult = 1.0f;  ///< Blue multiplier (1.0 = neutral)
   };
 
-  struct alignas(16) hdr_calibration_cbuffer_t {
-    float flags[4];       ///< x: enabled (1.0 or 0.0), y: count (up to 16), z: 0, w: 0
-    float points[16][4];  ///< each is {pq, r_mult, g_mult, b_mult}
+  /**
+   * @brief One EOTF gain point: a brightness multiplier (R=G=B) at a luminance level.
+   */
+  struct eotf_point_t {
+    float nits = 0.0f;
+    float gain = 1.0f;  ///< Luminance multiplier (1.0 = neutral)
   };
 
-  float nits_to_pq(float nits);
-  std::vector<hdr_calibration_point_t> default_hdr_calibration_points();
-  hdr_calibration_cbuffer_t build_hdr_calibration_cbuffer(const std::vector<hdr_calibration_point_t> &points, bool enabled);
-  std::string serialize_hdr_calibration(const std::vector<hdr_calibration_point_t> &points);
-  std::vector<hdr_calibration_point_t> deserialize_hdr_calibration(const std::string &json_str);
+  struct alignas(16) hdr_calibration_cbuffer_t {
+    float flags[4];  ///< x: color calibration enabled (1.0 or 0.0), y: count (up to 16), z: shadow gamma (1.0 = off), w: PQ value of the shadow knee
+    float points[16][4];  ///< each is {pq, r_mult, g_mult, b_mult}
+    float eotf_flags[4];  ///< x: EOTF gain enabled (1.0 or 0.0), y: count (up to 16), z: shadow slope (1.0 = off), w: 0
+    float eotf_points[16][4];  ///< each is {pq, gain, 0, 0}
+  };
+
+  enum class test_pattern_e {
+    patch,  ///< Flat grey patch at a chosen luminance (any input hides it)
+    eotf_chart,  ///< EOTF null chart (only Esc or the web UI hides it)
+  };
 
   struct active_calibration_t {
     mutable std::mutex mtx;
     bool enabled = false;
     std::vector<hdr_calibration_point_t> points;
+
+    // EOTF (brightness curve) correction
+    bool eotf_enabled = false;
+    std::vector<eotf_point_t> eotf_points;
+    float shadow_gamma = 1.0f;
+    float shadow_slope = 1.0f;
+    float shadow_knee_nits = 10000.0f;
+
+    // In-stream test pattern
     bool test_pattern_active = false;
+    test_pattern_e test_pattern_type = test_pattern_e::patch;
     float test_pattern_nits = 10.0f;
     bool test_pattern_fullscreen = false;
     std::chrono::steady_clock::time_point test_pattern_activated_at;
-    uint32_t version = 0;
+
+    // EOTF chart options
+    float chart_peak_nits = 1000.0f;
+    int chart_line_px = 2;
+    bool chart_end_strips = true;
+    float chart_range_stops = 1.0f;
+    int chart_bands = 12;
+
+    std::atomic<uint32_t> version {0};
   };
+
+  float nits_to_pq(float nits);
+  std::vector<hdr_calibration_point_t> default_hdr_calibration_points();
+  /**
+   * @brief Build the shader constant buffer from the live calibration state.
+   * @note The caller must hold `state.mtx`.
+   */
+  hdr_calibration_cbuffer_t build_hdr_calibration_cbuffer(const active_calibration_t &state);
+  std::string serialize_hdr_calibration(const std::vector<hdr_calibration_point_t> &points);
+  std::vector<hdr_calibration_point_t> deserialize_hdr_calibration(const std::string &json_str);
+  std::string serialize_eotf_points(const std::vector<eotf_point_t> &points);
+  std::vector<eotf_point_t> deserialize_eotf_points(const std::string &json_str);
+  std::vector<eotf_point_t> eotf_points_from_json(const nlohmann::json &j);
 
   extern active_calibration_t active_hdr_calibration;
 
-  void dismiss_hdr_test_pattern();
+  /**
+   * @brief Hide the in-stream test pattern because of user input.
+   * @param is_escape True when the input was the Esc key. The EOTF chart only reacts to Esc.
+   */
+  void dismiss_hdr_test_pattern(bool is_escape = false);
 }  // namespace video

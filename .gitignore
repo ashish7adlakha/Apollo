@@ -56,3 +56,15 @@ package-lock.json
 # Python
 *.pyc
 venv/
+
+# EOTF chart tool: portable Python and generated files
+tools/eotf_pattern/python/
+tools/eotf_pattern/out/
+
+# Portable build tools (see BUILD_LOCAL.md): ignore everything downloaded or generated
+# in tools/build-env (msys64, node, sandbox, downloads, ...) and keep only the scripts
+tools/build-env/*
+!tools/build-env/*.ps1
+
+# Local build caches
+.ccache/

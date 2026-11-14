@@ -28,22 +28,9 @@ uint4 main_ps(vertex_t input) : SV_Target
 
 #ifdef PLANAR_VIEWPORTS
     // Planar R16, 10 most significant bits store the value
-    float val = dot(input.color_vec.xyz, rgb) + input.color_vec.w;
-#if defined(PERCEPTUAL_QUANTIZER)
-    if (input.viewport == 0 && gamma_params.y != 1.0f) {
-        val = pow(saturate(val), gamma_params.y);
-    }
-#endif
-    return uint(val) << 6;
+    return uint(dot(input.color_vec.xyz, rgb) + input.color_vec.w) << 6;
 #else
     float y = dot(color_vec_y.xyz, rgb) + color_vec_y.w;
-
-#if defined(PERCEPTUAL_QUANTIZER)
-    if (gamma_params.y != 1.0f) {
-        y = pow(saturate(y), gamma_params.y);
-    }
-#endif
-
     float u = dot(color_vec_u.xyz, rgb) + color_vec_u.w;
     float v = dot(color_vec_v.xyz, rgb) + color_vec_v.w;
 

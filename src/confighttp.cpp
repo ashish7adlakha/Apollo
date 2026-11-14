@@ -29,6 +29,7 @@
 #include "confighttp.h"
 #include "crypto.h"
 #include "display_device.h"
+#include "eotf_chart.h"
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
@@ -1088,7 +1089,8 @@ namespace confighttp {
     {
       std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
       output_tree["enabled"] = ::video::active_hdr_calibration.enabled;
-      output_tree["test_pattern_active"] = ::video::active_hdr_calibration.test_pattern_active;
+      output_tree["test_pattern_active"] = ::video::active_hdr_calibration.test_pattern_active &&
+                                           ::video::active_hdr_calibration.test_pattern_type == ::video::test_pattern_e::patch;
       output_tree["test_pattern_nits"] = ::video::active_hdr_calibration.test_pattern_nits;
       output_tree["test_pattern_fullscreen"] = ::video::active_hdr_calibration.test_pattern_fullscreen;
 
@@ -1124,10 +1126,19 @@ namespace confighttp {
         }
         if (input_tree.contains("test_pattern_active") && input_tree["test_pattern_active"].is_boolean()) {
           bool active = input_tree["test_pattern_active"].get<bool>();
-          if (active && !::video::active_hdr_calibration.test_pattern_active) {
-            ::video::active_hdr_calibration.test_pattern_activated_at = std::chrono::steady_clock::now();
+          auto &state = ::video::active_hdr_calibration;
+          const bool chart_showing = state.test_pattern_active && state.test_pattern_type == ::video::test_pattern_e::eotf_chart;
+          if (active) {
+            // The grey patch takes over from the EOTF chart
+            if (!state.test_pattern_active || chart_showing) {
+              state.test_pattern_activated_at = std::chrono::steady_clock::now();
+            }
+            state.test_pattern_type = ::video::test_pattern_e::patch;
+            state.test_pattern_active = true;
+          } else if (!chart_showing) {
+            // The EOTF chart is owned by /api/hdr-eotf, so color tuning does not hide it
+            state.test_pattern_active = false;
           }
-          ::video::active_hdr_calibration.test_pattern_active = active;
         }
         if (input_tree.contains("test_pattern_nits") && input_tree["test_pattern_nits"].is_number()) {
           ::video::active_hdr_calibration.test_pattern_nits = input_tree["test_pattern_nits"].get<float>();
@@ -1286,6 +1297,225 @@ namespace confighttp {
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "SaveHdrCalibration: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
+  /**
+   * @brief Apply the fields of an EOTF request to the live calibration state.
+   * @note The caller must hold `active_hdr_calibration.mtx`.
+   */
+  void apply_eotf_json(const nlohmann::json &input_tree) {
+    auto &state = ::video::active_hdr_calibration;
+
+    if (input_tree.contains("chart_active") && input_tree["chart_active"].is_boolean()) {
+      bool active = input_tree["chart_active"].get<bool>();
+      if (active) {
+        if (!state.test_pattern_active || state.test_pattern_type != ::video::test_pattern_e::eotf_chart) {
+          state.test_pattern_activated_at = std::chrono::steady_clock::now();
+        }
+        state.test_pattern_type = ::video::test_pattern_e::eotf_chart;
+        state.test_pattern_active = true;
+      } else if (state.test_pattern_type == ::video::test_pattern_e::eotf_chart) {
+        state.test_pattern_active = false;
+      }
+    }
+    if (input_tree.contains("chart_peak_nits") && input_tree["chart_peak_nits"].is_number()) {
+      state.chart_peak_nits = std::clamp(input_tree["chart_peak_nits"].get<float>(), 10.0f, 10000.0f);
+    }
+    if (input_tree.contains("chart_line_px") && input_tree["chart_line_px"].is_number()) {
+      state.chart_line_px = std::clamp(input_tree["chart_line_px"].get<int>(), 1, 8);
+    }
+    if (input_tree.contains("chart_end_strips") && input_tree["chart_end_strips"].is_boolean()) {
+      state.chart_end_strips = input_tree["chart_end_strips"].get<bool>();
+    }
+    if (input_tree.contains("chart_bands") && input_tree["chart_bands"].is_number()) {
+      state.chart_bands = std::clamp(input_tree["chart_bands"].get<int>(), 4, ::video::eotf_chart::max_band_count);
+    }
+    if (input_tree.contains("chart_range_stops") && input_tree["chart_range_stops"].is_number()) {
+      state.chart_range_stops = std::clamp(input_tree["chart_range_stops"].get<float>(), 0.1f, 2.0f);
+    }
+    if (input_tree.contains("eotf_enabled") && input_tree["eotf_enabled"].is_boolean()) {
+      state.eotf_enabled = input_tree["eotf_enabled"].get<bool>();
+    }
+    if (input_tree.contains("eotf_points") && input_tree["eotf_points"].is_array()) {
+      state.eotf_points = ::video::eotf_points_from_json(input_tree["eotf_points"]);
+    }
+    if (input_tree.contains("shadow_gamma") && input_tree["shadow_gamma"].is_number()) {
+      state.shadow_gamma = std::clamp(input_tree["shadow_gamma"].get<float>(), 0.8f, 2.5f);
+    }
+    if (input_tree.contains("shadow_slope") && input_tree["shadow_slope"].is_number()) {
+      state.shadow_slope = std::clamp(input_tree["shadow_slope"].get<float>(), 0.25f, 4.0f);
+    }
+    if (input_tree.contains("shadow_knee") && input_tree["shadow_knee"].is_number()) {
+      state.shadow_knee_nits = std::clamp(input_tree["shadow_knee"].get<float>(), 1.0f, 10000.0f);
+    }
+    state.version++;
+  }
+
+  /**
+   * @brief Set `key = value` lines in the config file, replacing existing lines for the same keys.
+   */
+  void write_config_keys(const std::vector<std::pair<std::string, std::string>> &entries) {
+    auto file_content = file_handler::read_file(config::sunshine.config_file.c_str());
+    std::stringstream in(file_content);
+    std::stringstream out;
+    std::string line;
+    std::vector<bool> written(entries.size(), false);
+
+    while (std::getline(in, line)) {
+      bool replaced = false;
+      for (size_t i = 0; i < entries.size(); ++i) {
+        const auto &key = entries[i].first;
+        if (!boost::starts_with(line, key)) {
+          continue;
+        }
+        // Make sure the whole key matches, not only a prefix of a longer key
+        auto rest = line.find_first_not_of(" \t", key.size());
+        if (rest == std::string::npos || line[rest] != '=') {
+          continue;
+        }
+        if (!written[i]) {
+          out << key << " = " << entries[i].second << "\n";
+          written[i] = true;
+        }
+        replaced = true;
+        break;
+      }
+      if (!replaced) {
+        out << line << "\n";
+      }
+    }
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (!written[i]) {
+        out << entries[i].first << " = " << entries[i].second << "\n";
+      }
+    }
+
+    file_handler::write_file(config::sunshine.config_file.c_str(), out.str());
+  }
+
+  /**
+   * @brief Get the live EOTF correction and EOTF chart state.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/hdr-eotf| GET| null}
+   */
+  void getHdrEotf(resp_https_t response, req_https_t request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    nlohmann::json output_tree;
+    {
+      auto &state = ::video::active_hdr_calibration;
+      std::lock_guard<std::mutex> lock(state.mtx);
+      output_tree["chart_active"] = state.test_pattern_active && state.test_pattern_type == ::video::test_pattern_e::eotf_chart;
+      output_tree["chart_peak_nits"] = state.chart_peak_nits;
+      output_tree["chart_line_px"] = state.chart_line_px;
+      output_tree["chart_end_strips"] = state.chart_end_strips;
+      output_tree["chart_range_stops"] = state.chart_range_stops;
+      output_tree["chart_bands"] = state.chart_bands;
+      output_tree["eotf_enabled"] = state.eotf_enabled;
+      output_tree["shadow_gamma"] = state.shadow_gamma;
+      output_tree["shadow_knee"] = state.shadow_knee_nits;
+      output_tree["shadow_slope"] = state.shadow_slope;
+
+      nlohmann::json pts_json = nlohmann::json::array();
+      for (const auto &p : state.eotf_points) {
+        pts_json.push_back({
+          {"nits", p.nits},
+          {"gain", p.gain}
+        });
+      }
+      output_tree["eotf_points"] = pts_json;
+    }
+
+    send_response(response, output_tree);
+  }
+
+  /**
+   * @brief Change the EOTF correction or the EOTF chart on the running stream.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/hdr-eotf| POST| {"chart_active":true,"shadow_gamma":1.2}}
+   */
+  void updateHdrEotf(resp_https_t response, req_https_t request) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
+      return;
+    }
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    try {
+      auto input_tree = nlohmann::json::parse(ss);
+      {
+        std::lock_guard<std::mutex> lock(::video::active_hdr_calibration.mtx);
+        apply_eotf_json(input_tree);
+      }
+
+      nlohmann::json output_tree;
+      output_tree["status"] = true;
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "UpdateHdrEotf: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
+  /**
+   * @brief Apply the EOTF correction and write it to the config file.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/hdr-eotf/save| POST| {"eotf_enabled":true,"eotf_points":[{"nits":500,"gain":0.9}]}}
+   */
+  void saveHdrEotf(resp_https_t response, req_https_t request) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
+      return;
+    }
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    try {
+      auto input_tree = nlohmann::json::parse(ss);
+      bool enabled;
+      std::string points_serialized;
+      float shadow_gamma;
+      float shadow_knee;
+      float shadow_slope;
+      {
+        auto &state = ::video::active_hdr_calibration;
+        std::lock_guard<std::mutex> lock(state.mtx);
+        apply_eotf_json(input_tree);
+        enabled = state.eotf_enabled;
+        points_serialized = ::video::serialize_eotf_points(state.eotf_points);
+        shadow_gamma = state.shadow_gamma;
+        shadow_knee = state.shadow_knee_nits;
+        shadow_slope = state.shadow_slope;
+      }
+
+      config::video.hdr_eotf_enabled = enabled;
+      config::video.hdr_eotf_data = points_serialized;
+      config::video.hdr_shadow_gamma = shadow_gamma;
+      config::video.hdr_shadow_knee = shadow_knee;
+      config::video.hdr_shadow_slope = shadow_slope;
+
+      write_config_keys({
+        {"hdr_eotf_enabled", enabled ? "true" : "false"},
+        {"hdr_eotf_data", points_serialized},
+        {"hdr_shadow_gamma", std::format("{:.3f}", shadow_gamma)},
+        {"hdr_shadow_knee", std::format("{:.1f}", shadow_knee)},
+        {"hdr_shadow_slope", std::format("{:.3f}", shadow_slope)},
+      });
+
+      nlohmann::json output_tree;
+      output_tree["status"] = true;
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "SaveHdrEotf: "sv << e.what();
       bad_request(response, request, e.what());
     }
   }
@@ -1758,6 +1988,9 @@ namespace confighttp {
     server.resource["^/api/hdr-calibration$"]["GET"] = getHdrCalibration;
     server.resource["^/api/hdr-calibration$"]["POST"] = updateHdrCalibration;
     server.resource["^/api/hdr-calibration/save$"]["POST"] = saveHdrCalibration;
+    server.resource["^/api/hdr-eotf$"]["GET"] = getHdrEotf;
+    server.resource["^/api/hdr-eotf$"]["POST"] = updateHdrEotf;
+    server.resource["^/api/hdr-eotf/save$"]["POST"] = saveHdrEotf;
     server.resource["^/api/restart$"]["POST"] = restart;
     server.resource["^/api/quit$"]["POST"] = quit;
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;

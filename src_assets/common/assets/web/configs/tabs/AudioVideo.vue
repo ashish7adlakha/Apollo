@@ -7,6 +7,7 @@ import DisplayOutputSelector from './audiovideo/DisplayOutputSelector.vue'
 import DisplayDeviceOptions from "./audiovideo/DisplayDeviceOptions.vue";
 import DisplayModesSettings from "./audiovideo/DisplayModesSettings.vue";
 import HdrCalibration from "./audiovideo/HdrCalibration.vue";
+import EotfCheck from "./audiovideo/EotfCheck.vue";
 import Checkbox from "../../Checkbox.vue";
 
 const $t = inject('i18n').t;
@@ -224,12 +225,11 @@ const validateFallbackMode = (event) => {
       <div class="form-text">{{ $t('config.hdr_black_lift_desc') }}</div>
     </div>
 
-    <!-- HDR Shadow Curve (Toe Gamma) -->
-    <div class="mb-3">
-      <label for="hdr_shadow_gamma" class="form-label">{{ $t('config.hdr_shadow_gamma') }}</label>
-      <input type="number" class="form-control" id="hdr_shadow_gamma" placeholder="1.25" min="0.8" max="2.5" step="0.05" v-model="config.hdr_shadow_gamma" />
-      <div class="form-text">{{ $t('config.hdr_shadow_gamma_desc') }}</div>
-    </div>
+    <!-- HDR EOTF Check: in-stream chart, shadow curve and per-band brightness fix -->
+    <EotfCheck
+      :platform="platform"
+      :config="config"
+    />
 
     <!-- HDR Multi-Point Color Calibration & Test Pattern Studio -->
     <HdrCalibration
